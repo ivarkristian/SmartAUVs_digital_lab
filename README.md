@@ -88,7 +88,7 @@ This script transforms chemical data from a NetCDF file to VTK format suitable f
    ```sh
     pip install -r requirements.txt
    ```
-3. **Run Scarips You Wish :grinning:**
+3. **Run Scrips You Wish :grinning:**
 
 ## References
 
