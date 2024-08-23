@@ -329,12 +329,19 @@ def generate_lawnmower_waypoints(x_data, y_data, width, min_turn_radius, siglay,
     
     # Add turns to the path based on the direction and turn radius
     waypoints_with_turns = add_turns_to_waypoints(waypoints, width, min_turn_radius, direction=direction)
+    
+    # Convert waypoints to numpy array if not already
     waypoints_with_turns = np.array(waypoints_with_turns)
 
-    # Extract x, y, and z coordinates
+    # Extract x and y coordinates
     x_coords = waypoints_with_turns[:, 0]
     y_coords = waypoints_with_turns[:, 1]
+
+    # Create z coordinates, filled with the siglay value
     z_coords = np.full_like(x_coords, siglay)
+
+    # Stack x, y, and z coordinates together
+    waypoints_with_turns = np.column_stack((waypoints_with_turns, z_coords))
 
     return waypoints_with_turns, x_coords, y_coords, z_coords
 
