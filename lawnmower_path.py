@@ -1,3 +1,20 @@
+"""
+This script generates and visualizes a lawnmower path with turns for a given domain.
+
+The lawnmower path is a common strategy used in autonomous underwater vehicle (AUV) missions, 
+land surveying, and agricultural applications to ensure complete coverage of an area. The script
+calculates waypoints for the path, including handling turns with cloverleaf and half-circle maneuvers.
+
+It then visualizes the path by plotting the domain and the path with waypoints using Matplotlib, 
+including the ability to label the waypoints and customize the plot's appearance.
+
+Key features include:
+- Customizable path width and minimum turn radius
+- Directional control for the path
+- Optional LaTeX-style font settings for publication-quality plots
+- Legends and labels for enhanced plot readability
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -32,13 +49,28 @@ def make_lawnmower_path(x_data, y_data, width, min_turn_radius, direction='y'):
     waypoints : list of tuple
         List of waypoints as (x, y) coordinates.
     """
-    buffer = max(width, min_turn_radius)
+    # Determine if cloverleaf pattern is used
+    use_cloverleaf = width < min_turn_radius
 
-    x_min, x_max = np.min(x_data) + buffer, np.max(x_data) - buffer
-    y_min, y_max = np.min(y_data) + buffer, np.max(y_data) - buffer
+    # Calculate the buffer depending on the pattern used and direction
+    if use_cloverleaf:
+        if direction == 'x':
+            buffer_x = min_turn_radius * 2
+            buffer_y = min_turn_radius
+        elif direction == 'y':
+            buffer_x = min_turn_radius
+            buffer_y = min_turn_radius * 2
+    else:
+        buffer_x = width/2
+        buffer_y = width/2
+
+    # Define the boundaries of the area after applying the buffer
+    x_min, x_max = np.min(x_data) + buffer_x, np.max(x_data) - buffer_x
+    y_min, y_max = np.min(y_data) + buffer_y, np.max(y_data) - buffer_y
 
     waypoints = []
 
+    # Create the lawnmower path based on the selected direction
     if direction == 'x':
         num_passes = int((x_max - x_min) / width) + 1
 
@@ -47,6 +79,7 @@ def make_lawnmower_path(x_data, y_data, width, min_turn_radius, direction='y'):
             if x_start > x_max:
                 break
 
+            # Alternate between bottom-to-top and top-to-bottom passes
             if i % 2 == 0:
                 waypoints.extend([(x_start, y_min), (x_start, y_max)])
             else:
@@ -60,6 +93,7 @@ def make_lawnmower_path(x_data, y_data, width, min_turn_radius, direction='y'):
             if y_start > y_max:
                 break
 
+            # Alternate between left-to-right and right-to-left passes
             if i % 2 == 0:
                 waypoints.extend([(x_min, y_start), (x_max, y_start)])
             else:
@@ -88,34 +122,39 @@ def generate_cloverleaf_points(center1, center2, radius, mode='up', direction='c
     turn_points : list of tuple
         List of (x, y) points forming the cloverleaf turn.
     """
-    theta = np.linspace(-np.pi/2, np.pi, 100)
-
+    # Generate arc points based on the mode and orientation
     if mode == 'up':
-        arc1_x = center1[0] + radius * np.sin(theta + 3 * np.pi / 2)
-        arc1_y = center1[1] + radius * np.cos(theta + 3 * np.pi / 2)
+        theta = np.linspace(-np.pi/2, np.pi, 100)
         arc2_x = center2[0] + radius * np.sin(theta)
         arc2_y = center2[1] + radius * np.cos(theta)
-    elif mode == 'down':
         arc1_x = center1[0] + radius * np.sin(theta + 3 * np.pi / 2)
-        arc1_y = center1[1] - radius * np.cos(theta + 3 * np.pi / 2)
+        arc1_y = center1[1] + radius * np.cos(theta + 3 * np.pi / 2)
+    elif mode == 'down':
+        theta = np.linspace(-np.pi/2, np.pi, 100)
         arc2_x = center2[0] + radius * np.sin(theta)
-        arc2_y = center2[1] - radius * np.cos(theta)
+        arc2_y = center2[1] + radius * -np.cos(theta)
+        arc1_x = center1[0] + radius * np.sin(theta + 3 * np.pi / 2)
+        arc1_y = center1[1] + radius * -np.cos(theta + 3 * np.pi / 2)
     elif mode == 'left':
         theta = np.linspace(np.pi/2, -np.pi, 100)
-        arc1_x = center1[0] - radius * np.cos(theta + 3 * np.pi / 2)
-        arc1_y = center1[1] + radius * np.sin(theta + 3 * np.pi / 2)
         arc2_x = center2[0] + radius * np.cos(theta)
-        arc2_y = center2[1] - radius * np.sin(theta)
+        arc2_y = center2[1] + radius * -np.sin(theta)
+        arc1_x = center1[0] + radius * -np.cos(theta + 3 * np.pi / 2)
+        arc1_y = center1[1] + radius * np.sin(theta + 3 * np.pi / 2)
     elif mode == 'right':
-        arc1_x = center1[0] - radius * np.cos(theta + 3 * np.pi / 2)
-        arc1_y = center1[1] + radius * np.sin(-theta + 3 * np.pi / 2)
-        arc2_x = center2[0] - radius * np.cos(theta)
+        theta = np.linspace(-np.pi/2, np.pi, 100)
+        arc2_x = center2[0] + radius * -np.cos(theta)
         arc2_y = center2[1] + radius * np.sin(theta)
+        arc1_x = center1[0] + radius * -np.cos(theta + 3 * np.pi / 2)
+        arc1_y = center1[1] + radius * np.sin(-theta + 3 * np.pi / 2)
     else:
         raise ValueError("Mode must be one of 'up', 'down', 'left', or 'right'.")
 
-    turn_points = list(zip(arc1_x, arc1_y)) + list(zip(arc2_x, arc2_y))
+    turn_points = []
+    turn_points.extend(zip(arc2_x, arc2_y))
+    turn_points.extend(zip(arc1_x, arc1_y))
     
+    # Reverse the points if the turn direction is counterclockwise
     if direction == 'counterclockwise':
         turn_points.reverse()
     
@@ -173,37 +212,48 @@ def add_turns_to_waypoints(waypoints, width, min_turn_radius, direction='y'):
     waypoints_with_turns = []
     mid_point = width / 2
     use_cloverleaf = width < min_turn_radius
-    mode_toggle = 1
+    mode_toggle = 1  # Used to alternate turn direction
 
     for i, waypoint in enumerate(waypoints):
         waypoints_with_turns.append(waypoint)
 
+        # Add turns at the end of each pass except the last one
         if i % 2 != 0 and i < (len(waypoints) - 1):
-            if use_cloverleaf:
-                if direction == 'x':
-                    center1 = (waypoint[0] - min_turn_radius, waypoint[1])
+            if direction == 'x':
+                if use_cloverleaf:
+                    # Generate cloverleaf turns when width < min_turn_radius
+                    center1 = (waypoints[i][0] - min_turn_radius, waypoints[i][1])
                     center2 = (waypoints[i + 1][0] + min_turn_radius, waypoints[i + 1][1])
                     mode = 'up' if mode_toggle > 0 else 'down'
-                else:  # direction == 'y'
-                    center1 = (waypoint[0], waypoint[1] - min_turn_radius)
-                    center2 = (waypoints[i + 1][0], waypoints[i + 1][1] + min_turn_radius)
-                    mode = 'left' if mode_toggle > 0 else 'right'
-                    
-                turn_points = generate_cloverleaf_points(center1, center2, min_turn_radius, mode=mode)
-            else:
-                if direction == 'x':
+                    turn_points = generate_cloverleaf_points(center1, center2, min_turn_radius, mode=mode)
+                else:
+                    # Generate half-circle turns when cloverleaf is not used
                     x_sign = 1
                     y_sign = 1 if mode_toggle > 0 else -1
-                    x_arc, y_arc = add_half_circle_turn(waypoint[0] + mid_point, waypoint[1], mid_point, np.pi, 0, 10, x_sign, y_sign)
-                else:  # direction == 'y'
+                    x_center = waypoints[i][0]
+                    y_max = waypoints[i][1]
+                    x_arc, y_arc = add_half_circle_turn(x_center + mid_point, y_max, mid_point, np.pi, 0, 10, x_sign, y_sign)
+                    turn_points = list(zip(x_arc, y_arc))
+                    
+            elif direction == 'y':
+                if use_cloverleaf:
+                    # Generate cloverleaf turns when width < min_turn_radius
+                    center1 = (waypoints[i][0], waypoints[i][1] - min_turn_radius)
+                    center2 = (waypoints[i + 1][0], waypoints[i + 1][1] + min_turn_radius)
+                    mode = 'left' if mode_toggle > 0 else 'right'
+                    turn_points = generate_cloverleaf_points(center1, center2, min_turn_radius, mode=mode)
+                else:
+                    # Generate half-circle turns when cloverleaf is not used
                     x_sign = 1 if mode_toggle > 0 else -1
                     y_sign = 1
-                    x_arc, y_arc = add_half_circle_turn(waypoint[0], waypoint[1] + mid_point, mid_point, -np.pi/2, np.pi/2, 10, x_sign, y_sign)
+                    y_center = waypoints[i][1]
+                    x_max = waypoints[i][0]
+                    x_arc, y_arc = add_half_circle_turn(x_max, y_center + mid_point, mid_point, -np.pi / 2, np.pi / 2, 10, x_sign, y_sign)
+                    turn_points = list(zip(x_arc, y_arc))
 
-                turn_points = list(zip(x_arc, y_arc))
-
+            # Add generated turn points to the waypoints with turns
             waypoints_with_turns.extend(turn_points)
-            mode_toggle *= -1
+            mode_toggle *= -1  # Toggle the direction for the next turn
 
     return waypoints_with_turns
 
@@ -274,10 +324,14 @@ def generate_lawnmower_waypoints(x_data, y_data, width, min_turn_radius, siglay,
     x_coords, y_coords, z_coords : ndarray
         x, y, and z coordinates of the waypoints.
     """
+    # Generate the basic lawnmower path
     waypoints = make_lawnmower_path(x_data, y_data, width, min_turn_radius, direction=direction)
+    
+    # Add turns to the path based on the direction and turn radius
     waypoints_with_turns = add_turns_to_waypoints(waypoints, width, min_turn_radius, direction=direction)
     waypoints_with_turns = np.array(waypoints_with_turns)
 
+    # Extract x, y, and z coordinates
     x_coords = waypoints_with_turns[:, 0]
     y_coords = waypoints_with_turns[:, 1]
     z_coords = np.full_like(x_coords, siglay)
@@ -286,17 +340,18 @@ def generate_lawnmower_waypoints(x_data, y_data, width, min_turn_radius, siglay,
 
 
 if __name__ == '__main__':
-    # Dummy domain
+    # Dummy domain for generating example waypoints
     x_data = np.linspace(0, 500, 3000)
     y_data = np.linspace(0, 500, 3000)
 
+    # Generate waypoints for the lawnmower path with specified parameters
     waypoints_with_turns, x_coords, y_coords, z_coords = generate_lawnmower_waypoints(
         x_data, y_data, width=50, min_turn_radius=50, siglay=1, direction='y'
     )
 
-    # Domain boundaries
+    # Domain boundaries for the plot
     x_min, x_max = np.min(x_data), np.max(x_data)
     y_min, y_max = np.min(y_data), np.max(y_data)
 
+    # Visualize the path with the domain background and labeled waypoints
     scatter_plot_points_and_path(waypoints_with_turns, x_min, x_max, y_min, y_max)
-
