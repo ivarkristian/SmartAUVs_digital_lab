@@ -91,6 +91,11 @@ def interpolate_values(values, vertices, weights, fill_value=np.nan):
     interpolated[np.any(weights < 0, axis=1)] = fill_value
     return interpolated
 
+def print_netcdf_info(data_path):
+    # Load the NetCDF file
+    dataset = xr.open_dataset(data_path, decode_times=False)
+    print(dataset.data_vars)
+
 def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='vtk_output'):
     """
     Transforms chemical data from a NetCDF file to VTK format suitable for volume rendering.
@@ -117,10 +122,15 @@ def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='v
     warnings.filterwarnings("ignore", category=SerializationWarning)
     
     # Ensure the output directory exists
+    output_dir += '/' + os.path.basename(data_path).split(sep='.')[0][:-5]
     ensure_directory_exists(output_dir)
-
+    print(f'Reading file {data_path}')
+    
     # Load the NetCDF file
     dataset = xr.open_dataset(data_path, decode_times=False)
+
+    print(f"Found {len(dataset['time'].values)} time steps.")
+    print(f'Extracting data variables: {data_variables}')
 
     # Convert ITIME to actual timestamps
     time_reference = pd.Timestamp('1970-01-01')
@@ -132,6 +142,7 @@ def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='v
     x_coords = dataset['x'].values[:72710]
     y_coords = dataset['y'].values[:72710]
     z_coords = dataset['siglay'].values[:, :72710]
+    z_coords = z_coords*z_coords.shape[0]
 
     # Define target grid for interpolation
     x_min = np.floor(np.min(x_coords))
@@ -148,7 +159,7 @@ def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='v
     z_target = np.linspace(z_min, z_max, z_coords.shape[0])
 
     dims = (len(x_target), len(y_target), len(z_target))
-    spacing = (x_target[1] - x_target[0], y_target[1] - y_target[0], z_target[1] - z_target[0])
+    spacing = (x_target[1] - x_target[0], y_target[1] - y_target[0], z_target[0] - z_target[1])
 
     source_points = np.column_stack((x_coords, y_coords))
     target_points = np.column_stack((X_target.ravel(), Y_target.ravel()))
@@ -160,8 +171,8 @@ def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='v
         interpolated_data = {var: np.zeros((len(x_target), len(y_target), len(z_target))) for var in data_variables}
 
         for layer_index in range(z_coords.shape[0]):
-            print(f"Processing time index: {time_index}/{len(dataset['time'].values) - 1}, "
-                  f"layer index: {layer_index}/{z_coords.shape[0] - 1}")
+            #print(f"Processing time index: {time_index}/{len(dataset['time'].values) - 1}, "
+            #      f"Layer index: {layer_index}/{z_coords.shape[0] - 1}")
 
             for data_variable in data_variables:
                 data_sample = dataset[data_variable].isel(time=time_index, siglay=layer_index).values[:72710]
@@ -171,12 +182,12 @@ def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='v
 
         for data_variable in data_variables:
             interpolated_flat = interpolated_data[data_variable].ravel(order='F')
-
+            
             # Create VTK image data object
             image_data = vtk.vtkImageData()
             image_data.SetDimensions(dims)
             image_data.SetSpacing(spacing)
-            image_data.SetOrigin(np.min(x_target), np.min(y_target), np.min(z_target))
+            image_data.SetOrigin(np.min(x_target), np.min(y_target), np.max(z_target))
 
             # Convert the interpolated data to VTK format
             vtk_data = numpy_to_vtk(interpolated_flat, deep=True)
@@ -185,13 +196,49 @@ def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='v
             image_data.GetPointData().SetScalars(vtk_data)
 
             # Write VTK file for the current time step
-            output_file = os.path.join(output_dir, f"interpolated_{data_variable}_timestep_{time_index}.vti")
-            writer = vtk.vtkXMLImageDataWriter()
-            writer.SetFileName(output_file)
-            writer.SetInputData(image_data)
-            writer.Write()
+            write_vtk_file(data_path, output_dir, time_index, data_variable, image_data)
 
+        if 'u' in data_variables and 'v' in data_variables:
+            # compute vector and direction
+            interpolated_flat_u = interpolated_data['u'].ravel(order='F')
+            interpolated_flat_v = interpolated_data['v'].ravel(order='F')
+            interpolated_flat_w = np.sqrt(interpolated_flat_u**2 + interpolated_flat_v**2)
+            # Compute the direction
+            direction_rad = np.arctan2(interpolated_flat_v, interpolated_flat_u)
+            interpolated_flat_d = np.degrees(direction_rad)
+
+            current_vars = [interpolated_flat_w, interpolated_flat_d]
+            names = ['current_w', 'current_d']
+            for i, var in enumerate(current_vars):
+                # Create VTK image data object
+                image_data = vtk.vtkImageData()
+                image_data.SetDimensions(dims)
+                image_data.SetSpacing(spacing)
+                image_data.SetOrigin(np.min(x_target), np.min(y_target), np.max(z_target))
+                
+                # Convert the interpolated data to VTK format
+                vtk_data = numpy_to_vtk(var, deep=True)
+                vtk_data.SetName(f'Interpolated_{names[i]}')
+
+                image_data.GetPointData().SetScalars(vtk_data)
+
+                write_vtk_file(data_path, output_dir, time_index, names[i], image_data)
+            
     print("VTK files saved for each time step suitable for volume rendering.")
+    print(f'Output directory: {output_dir}')
+
+def write_vtk_file(data_path, output_dir, time_index, data_variable, image_data):
+    
+    file_time_offset = (int(os.path.basename(data_path).split(sep='.')[0][-4:]) - 1)*12
+    file_time = file_time_offset + time_index
+    data_var_output_dir = output_dir + '/' + data_variable
+    ensure_directory_exists(data_var_output_dir)
+    output_file = os.path.join(data_var_output_dir, f"interpolated_{data_variable}_timestep_{file_time}.vti")
+    writer = vtk.vtkXMLImageDataWriter()
+    writer.SetFileName(output_file)
+    writer.SetInputData(image_data)
+    writer.Write()
+
 
 def plot_original_vs_interpolated(data_path, data_variable, timestep, layer):
     """
