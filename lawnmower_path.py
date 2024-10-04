@@ -345,6 +345,40 @@ def generate_lawnmower_waypoints(x_data, y_data, width, min_turn_radius, siglay,
 
     return waypoints_with_turns, x_coords, y_coords, z_coords
 
+def remove_consecutive_duplicate_wps(arr, tol=1e-8):
+    """
+    Remove consecutive duplicate rows from a NumPy array within a given tolerance.
+    
+    Parameters:
+    - arr: numpy.ndarray of shape (n, m)
+    - tol: float, tolerance for considering elements as equal
+    
+    Returns:
+    - new_arr: numpy.ndarray with consecutive duplicates removed
+    """
+    if not isinstance(arr, np.ndarray):
+        raise TypeError("Input must be a NumPy array.")
+    if arr.ndim != 2:
+        raise ValueError("Input array must be 2-dimensional.")
+    if len(arr) == 0:
+        return arr  # Return empty array if input is empty
+    
+    # Compute differences between consecutive rows
+    diffs = np.abs(arr[1:] - arr[:-1])
+    
+    # Check if differences are within tolerance for all elements in the row
+    within_tol = np.all(diffs <= tol, axis=1)
+    
+    # Initialize the mask with True values
+    mask = np.ones(len(arr), dtype=bool)
+    
+    # Update the mask for rows to keep
+    mask[1:] = ~within_tol
+    
+    # Apply the mask to the array to get the result
+    new_arr = arr[mask]
+    
+    return new_arr
 
 if __name__ == '__main__':
     # Dummy domain for generating example waypoints
