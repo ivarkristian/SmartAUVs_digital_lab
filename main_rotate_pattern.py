@@ -19,14 +19,14 @@ plt.rcParams.update({
 # %%
 x_data = np.linspace(0, 250, 3000)
 y_data = np.linspace(0, 250, 3000)
-
+depth = 67
 # Generate waypoints for the lawnmower path with specified parameters
 waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypoints(
-    x_data, y_data, width=50, min_turn_radius=50, siglay=1, direction='x'
+    x_data, y_data, width=5, min_turn_radius=5, siglay=depth, direction='x'
 )
 
 # remove duplicate waypoints
-new_wps = lp.remove_consecutive_duplicate_wps(waypoints_with_turns)
+waypoints_with_turns = lp.remove_consecutive_duplicate_wps(waypoints_with_turns, 1e-3)
 
 
 # %%
@@ -71,27 +71,28 @@ dataset = chem_utils.load_chemical_dataset(data_file)
 
 # %%
 # Read and plot depths from dataset
-ts = 3
+ts = 4
 data_parameter = 'pH'
 
-for depth in range(55, 70):
-    val_dataset = dataset[data_parameter].isel(time=ts, siglay=depth)
-    val = val_dataset.values[:72710]
-    x = val_dataset['x'].values[:72710]
-    y = val_dataset['y'].values[:72710]
-    x = x - x.min()
-    y = y - y.min()
-    fig, ax = plt.subplots(figsize=(8, 6))
-    scatter = ax.scatter(x, y, c=val, cmap='coolwarm', s=2)
-    cbar = fig.colorbar(scatter, ax=ax)
-    cbar.set_label('Value')
+for ts in range(10, 12):
+    for depth in range(67, 68):
+        val_dataset = dataset[data_parameter].isel(time=ts, siglay=depth)
+        val = val_dataset.values[:72710]
+        x = val_dataset['x'].values[:72710]
+        y = val_dataset['y'].values[:72710]
+        x = x - x.min()
+        y = y - y.min()
+        fig, ax = plt.subplots(figsize=(8, 6))
+        scatter = ax.scatter(x, y, c=val, cmap='coolwarm', s=2)
+        cbar = fig.colorbar(scatter, ax=ax)
+        cbar.set_label('Value')
 
-    # Add labels and title
-    ax.set_xlabel('Easting [m]')
-    ax.set_ylabel('Northing [m]')
-    ax.set_title(f'{data_parameter} at {depth}m depth')
+        # Add labels and title
+        ax.set_xlabel('Easting [m]')
+        ax.set_ylabel('Northing [m]')
+        ax.set_title(f'TS {ts}, {data_parameter} at {depth}m depth')
 
-    plt.show()
+        plt.show()
 
 # %%
 importlib.reload(path)
@@ -101,13 +102,29 @@ importlib.reload(lp)
 # %%
 # Extract using interpolating extract function
 #start_time = '2020-01-01T00:00:00.000000000'
-start_time = dataset['time'].values[0]
-speed = 100
+start_time = dataset['time'].values[4]
+speed = 10
 way_points = waypoints_with_turns
-sample_freq = 100
+sample_freq = 10
 threshold = np.inf
 pattern = None
-measurements, sample_coords = path.path(dataset, None, start_time, speed, way_points, sample_freq, threshold, pattern, )
+measurements, sample_coords = path.path(dataset, None, start_time, speed, way_points, sample_freq, threshold, pattern, 'pH')
 
 #metadata = (100, 100, 69, 3, 5)
+
 # %%
+fig = path.plot(waypoints_with_turns, sample_coords, measurements, 'pH', 'Title')
+fig.show()
+
+# %%
+# Decide scenario, depth, ts
+# Decide grid density
+# Compute waypoints
+# Decide rotation
+# Rotate
+# Sample (synoptic)
+# Normalize sample values to [0 1]
+# Train GP
+# Predict
+# Compute RMS error
+# Correlate RMSE with grid density, rotation.

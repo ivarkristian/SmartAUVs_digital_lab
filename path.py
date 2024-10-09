@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib import cm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import griddata
 from tqdm import tqdm
 from scipy.spatial import Delaunay
@@ -87,7 +88,7 @@ def interpolate_values(values, vertices, weights, fill_value=np.nan):
     return interpolated
 
 
-def plot(chemical_dataset, bubble_dataset, x_coords, y_coords, z_coords, sample_coords, data_var, title, siglay=69, save_as_gif=True, gif_filename='auv_path.gif'):
+def animate(chemical_dataset, bubble_dataset, x_coords, y_coords, z_coords, sample_coords, data_var, title, siglay=69, save_as_gif=True, gif_filename='auv_path.gif'):
     """
     Plots the 3D path of an AUV along with interpolated chemical data and sample points.
 
@@ -109,6 +110,7 @@ def plot(chemical_dataset, bubble_dataset, x_coords, y_coords, z_coords, sample_
         The chemical data variable to be plotted (e.g., 'pCO2').
     title : str
         Title of the plot.
+    siglay : The depth to run at(?)
     save_as_gif : bool, optional
         Whether to save the animation as a GIF (default is True).
     gif_filename : str, optional
@@ -147,7 +149,8 @@ def plot(chemical_dataset, bubble_dataset, x_coords, y_coords, z_coords, sample_
 
     # Add colorbar for the chemical concentration
     cbar_c = fig.colorbar(contour, ax=ax, shrink=0.5, aspect=10, location='left', pad=0.05)
-    cbar_c.set_label('Concentration of pCO2')
+    bar_label = f'Concentration of {data_var}'
+    cbar_c.set_label(bar_label)
 
     # Adjust the colorbar position
     cbar_c.ax.set_position([0.1, 0.3, 0.03, 0.4])
@@ -249,6 +252,54 @@ def plot(chemical_dataset, bubble_dataset, x_coords, y_coords, z_coords, sample_
     else:
         plt.show()
 
+def plot(waypoints, sample_coords, sample_values, data_var, title):
+    # Extract X and Y coordinates
+    x_coords = np.array([coord[0] for coord in sample_coords], dtype=float)
+    y_coords = np.array([coord[1] for coord in sample_coords], dtype=float)
+
+    # Create the figure and axes
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Plot the sample locations with values indicated by color
+    scatter = ax.scatter(
+        x_coords,
+        y_coords,
+        c=sample_values,
+        cmap='coolwarm',
+        s=5,
+        vmin=min(sample_values),
+        vmax=max(sample_values)
+    )
+
+    # Plot the path between waypoints
+    ax.plot(
+        waypoints[:, 0],
+        waypoints[:, 1],
+        linestyle='-',
+        color='red',
+        linewidth=0,
+        marker=None
+    )
+
+    # Create an axis on the left for the colorbar
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("left", size="5%", pad=0.1)
+
+    # Add the colorbar
+    cbar = fig.colorbar(scatter, cax=cax, orientation='vertical')
+    cbar.set_label('Sample Values')
+
+    # Adjust the main plot
+    ax.yaxis.set_label_position("right")
+    ax.yaxis.tick_right()
+    fig.subplots_adjust(left=0.2)
+
+    # Set labels and title
+    ax.set_xlabel('X Coordinate')
+    ax.set_ylabel('Y Coordinate')
+    ax.set_title('Sample Locations and Waypoints Path')
+
+    return fig
 
 def beam_angles(points):
     """
@@ -354,8 +405,9 @@ def path(dataset, bubble_dataset, start_time, speed, way_points, sample_frequenc
             sample_coords.append((x_sample, y_sample, z_sample, t))
 
             # Collect chemical data
-            metadata = (x_sample, y_sample, z_sample, str(t), sphere_radius)
-            chemical_volume_data_mean = extract_chemical_data_for_volume(dataset, metadata, data_variable)
+            nearest_t = abs((dataset['time'].values - t)).argmin()
+            metadata = (x_sample, y_sample, z_sample, nearest_t, sphere_radius)
+            chemical_volume_data_mean, data = extract_chemical_data_for_volume(dataset, metadata, data_variable)
             measurements.append(chemical_volume_data_mean)
 
             # Check if the chemical data exceeds the threshold and sample in a pattern if true
@@ -363,7 +415,7 @@ def path(dataset, bubble_dataset, start_time, speed, way_points, sample_frequenc
                 pattern_coords = pattern_func(np.array([x_sample, y_sample, z_sample]))
                 for coord in pattern_coords:
                     metadata_pattern = (coord[0], coord[1], coord[2], str(t), sphere_radius)
-                    chemical_volume_data_mean = extract_chemical_data_for_volume(dataset, metadata_pattern, data_variable)
+                    chemical_volume_data_mean, data = extract_chemical_data_for_volume(dataset, metadata_pattern, data_variable)
                     measurements.append(chemical_volume_data_mean)
                     sample_coords.append((coord[0], coord[1], coord[2], t))
 

@@ -229,7 +229,11 @@ def transform_netcdf_to_vtk(data_path, data_variables, resolution, output_dir='v
 
 def write_vtk_file(data_path, output_dir, time_index, data_variable, image_data):
     
-    file_time_offset = (int(os.path.basename(data_path).split(sep='.')[0][-4:]) - 1)*12
+    try:
+        file_time_offset = (int(os.path.basename(data_path).split(sep='.')[0][-4:]) - 1)*12
+    except:
+        file_time_offset = 0
+        
     file_time = file_time_offset + time_index
     data_var_output_dir = output_dir + '/' + data_variable
     ensure_directory_exists(data_var_output_dir)
