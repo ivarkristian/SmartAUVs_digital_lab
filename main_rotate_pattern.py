@@ -22,7 +22,7 @@ y_data = np.linspace(0, 250, 3000)
 depth = 67
 # Generate waypoints for the lawnmower path with specified parameters
 waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypoints(
-    x_data, y_data, width=5, min_turn_radius=5, siglay=depth, direction='x'
+    x_data, y_data, width=50, min_turn_radius=5, siglay=depth, direction='x'
 )
 
 # remove duplicate waypoints
