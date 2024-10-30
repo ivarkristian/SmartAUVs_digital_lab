@@ -17,22 +17,49 @@ plt.rcParams.update({
 })
 
 # %%
-x_data = np.linspace(0, 250, 3000)
-y_data = np.linspace(0, 250, 3000)
+scenario_x_min = 0
+scenario_x_max = 250
+scenario_y_min = 0
+scenario_y_max = 250
+
+sc_len = scenario_x_max - scenario_x_min
+path_len = sc_len/2.0 * np.sqrt(2.0)
+path_delta = (sc_len - path_len)/2.0
+
+path_x_min = scenario_x_min + path_delta
+path_x_max = scenario_x_max - path_delta
+path_y_min = scenario_y_min + path_delta
+path_y_max = scenario_y_max - path_delta
+
+resolution = 3000
+x_data = np.linspace(path_x_min, path_x_max, resolution)
+y_data = np.linspace(path_y_min, path_y_max, resolution)
 depth = 67
+
 # Generate waypoints for the lawnmower path with specified parameters
 waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypoints(
-    x_data, y_data, width=50, min_turn_radius=5, siglay=depth, direction='x'
+    x_data, y_data, width=10, min_turn_radius=5, siglay=depth, direction='x'
 )
 
 # remove duplicate waypoints
 waypoints_with_turns = lp.remove_consecutive_duplicate_wps(waypoints_with_turns, 1e-3)
 
+wp_x = waypoints_with_turns[:, 0]
+wp_y = waypoints_with_turns[:, 1]
+
+wp_x_min, wp_x_max = np.min(wp_x), np.max(wp_x)
+wp_y_min, wp_y_max = np.min(wp_y), np.max(wp_y)
+
 
 # %%
 # Domain boundaries for the plot
-x_min, x_max = np.min(x_data), np.max(x_data)
-y_min, y_max = np.min(y_data), np.max(y_data)
+x_mean = wp_x_min + (wp_x_max - wp_x_min)/2.0
+y_mean = wp_y_min + (wp_y_max - wp_y_min)/2.0
+
+x_min = x_mean - (x_mean - np.min(wp_x))*np.sqrt(2.0)
+y_min = y_mean - (y_mean - np.min(wp_y))*np.sqrt(2.0)
+x_max = x_mean + (np.max(wp_x) - x_mean)*np.sqrt(2.0)
+y_max = y_mean + (np.max(wp_y) - y_mean)*np.sqrt(2.0)
 
 # Visualize the path with the domain background and labeled waypoints
 lp.scatter_plot_points_and_path(waypoints_with_turns[:, :2], x_min, x_max, y_min, y_max)
@@ -42,17 +69,17 @@ lp.scatter_plot_points_and_path(waypoints_with_turns[:, :2], x_min, x_max, y_min
 angle_deg = 45.0
 
 # Subtract means
-x_off = (x_max - x_min)/2.0
-y_off = (y_max - y_min)/2.0
+x_off = (wp_x_max - wp_x_min)/2.0
+y_off = (wp_y_max - wp_y_min)/2.0
 
 z_coords = waypoints_with_turns[:, 2:]
-wp_to_rotate = waypoints_with_turns[:, :2] - [x_off, y_off]
-wp_rotated = path_utils.rotate_points(wp_to_rotate, angle_deg) + [x_off, y_off]
+wp_to_rotate = waypoints_with_turns[:, :2] - [x_mean, y_mean]
+wp_rotated = path_utils.rotate_points(wp_to_rotate, angle_deg) + [x_mean, y_mean]
 waypoints_with_turns_rotated = np.hstack((wp_rotated, z_coords))
 
 # New domain boundaries for the plot
-x_min, x_max = np.min(x_data), np.max(x_data)
-y_min, y_max = np.min(y_data), np.max(y_data)
+#x_min, x_max = np.min(x_data), np.max(x_data)
+#y_min, y_max = np.min(y_data), np.max(y_data)
 lp.scatter_plot_points_and_path(waypoints_with_turns_rotated[:, :2], x_min, x_max, y_min, y_max)
 
 # %%
@@ -74,8 +101,8 @@ dataset = chem_utils.load_chemical_dataset(data_file)
 ts = 4
 data_parameter = 'pH'
 
-for ts in range(10, 12):
-    for depth in range(67, 68):
+for ts in range(4, 5):
+    for depth in range(66, 69):
         val_dataset = dataset[data_parameter].isel(time=ts, siglay=depth)
         val = val_dataset.values[:72710]
         x = val_dataset['x'].values[:72710]
@@ -83,7 +110,7 @@ for ts in range(10, 12):
         x = x - x.min()
         y = y - y.min()
         fig, ax = plt.subplots(figsize=(8, 6))
-        scatter = ax.scatter(x, y, c=val, cmap='coolwarm', s=2)
+        scatter = ax.scatter(x, y, c=val, cmap='coolwarm', s=2, vmin=val.min(), vmax=val.max())
         cbar = fig.colorbar(scatter, ax=ax)
         cbar.set_label('Value')
 
@@ -100,21 +127,19 @@ importlib.reload(chem_utils)
 importlib.reload(lp)
 
 # %%
-# Extract using interpolating extract function
-#start_time = '2020-01-01T00:00:00.000000000'
+# Extract using interpolating extract function path.path()
 start_time = dataset['time'].values[4]
-speed = 10
+speed = 1.5
 way_points = waypoints_with_turns
-sample_freq = 10
-threshold = np.inf
-pattern = None
-measurements, sample_coords = path.path(dataset, None, start_time, speed, way_points, sample_freq, threshold, pattern, 'pH')
+sample_freq = 1
+measurements, sample_coords = path.path(dataset, way_points, start_time, speed, sample_freq, data_variable='pH', synoptic=True)
 
-#metadata = (100, 100, 69, 3, 5)
-
-# %%
-fig = path.plot(waypoints_with_turns, sample_coords, measurements, 'pH', 'Title')
+# Plot it
+vminmax = [val.min(), val.max()]
+fig = path.plot(waypoints_with_turns, sample_coords, measurements, 'pH [m]', vminmax=vminmax)
 fig.show()
+
+
 
 # %%
 # Decide scenario, depth, ts

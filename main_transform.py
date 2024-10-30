@@ -44,4 +44,3 @@ for file in nc_files:
     data_path = data_dir + file
     transform_to_paraview.transform_netcdf_to_vtk(data_path, data_vars, resolution, output_dir)
 
-# %%

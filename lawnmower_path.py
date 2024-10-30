@@ -61,8 +61,12 @@ def make_lawnmower_path(x_data, y_data, width, min_turn_radius, direction='y'):
             buffer_x = min_turn_radius
             buffer_y = min_turn_radius * 2
     else:
-        buffer_x = width/2
-        buffer_y = width/2
+        if direction == 'x':
+            buffer_x = width/2
+            buffer_y = 2*width/2
+        elif direction == 'y':
+            buffer_x = 2*width/2
+            buffer_y = width/2
 
     # Define the boundaries of the area after applying the buffer
     x_min, x_max = np.min(x_data) + buffer_x, np.max(x_data) - buffer_x
@@ -286,8 +290,8 @@ def scatter_plot_points_and_path(points, x_min, x_max, y_min, y_max):
     scatter = plt.scatter(x, y, c=colors, cmap='jet', label='Waypoints')
     
     plt.colorbar(scatter, label='Path progression')
-    plt.xlabel('X-axis')
-    plt.ylabel('Y-axis')
+    plt.xlabel('Easting [m]')
+    plt.ylabel('Northing [m]')
     plt.title('Lawnmower Path with Turns')
     plt.grid(True)
     plt.axis('equal')

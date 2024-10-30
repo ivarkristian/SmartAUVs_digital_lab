@@ -252,7 +252,7 @@ def animate(chemical_dataset, bubble_dataset, x_coords, y_coords, z_coords, samp
     else:
         plt.show()
 
-def plot(waypoints, sample_coords, sample_values, data_var, title):
+def plot(waypoints, sample_coords, sample_values, data_var='Default [m]', vminmax=None):
     # Extract X and Y coordinates
     x_coords = np.array([coord[0] for coord in sample_coords], dtype=float)
     y_coords = np.array([coord[1] for coord in sample_coords], dtype=float)
@@ -261,43 +261,50 @@ def plot(waypoints, sample_coords, sample_values, data_var, title):
     fig, ax = plt.subplots(figsize=(8, 6))
 
     # Plot the sample locations with values indicated by color
+    if not vminmax:
+        vmin = min(sample_values)
+        vmax = max(sample_values)
+    else:
+        vmin = vminmax[0]
+        vmax = vminmax[1]
+
     scatter = ax.scatter(
         x_coords,
         y_coords,
         c=sample_values,
         cmap='coolwarm',
-        s=5,
-        vmin=min(sample_values),
-        vmax=max(sample_values)
+        s=2,
+        vmin=vmin,
+        vmax=vmax
     )
 
     # Plot the path between waypoints
-    ax.plot(
-        waypoints[:, 0],
-        waypoints[:, 1],
-        linestyle='-',
-        color='red',
-        linewidth=0,
-        marker=None
-    )
+    #ax.plot(
+    #    waypoints[:, 0],
+    #    waypoints[:, 1],
+    #    linestyle='-',
+    #    color='red',
+    #    linewidth=0,
+    #    marker=None
+    #)
 
     # Create an axis on the left for the colorbar
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("left", size="5%", pad=0.1)
+    #divider = make_axes_locatable(ax)
+    #cax = divider.append_axes("left", size="5%", pad=0.1)
 
     # Add the colorbar
-    cbar = fig.colorbar(scatter, cax=cax, orientation='vertical')
-    cbar.set_label('Sample Values')
+    cbar = fig.colorbar(scatter, ax=ax)
+    cbar.set_label(data_var)
 
     # Adjust the main plot
-    ax.yaxis.set_label_position("right")
-    ax.yaxis.tick_right()
-    fig.subplots_adjust(left=0.2)
+    #ax.yaxis.set_label_position("right")
+    #ax.yaxis.tick_right()
+    #fig.subplots_adjust(left=0.2)
 
     # Set labels and title
-    ax.set_xlabel('X Coordinate')
-    ax.set_ylabel('Y Coordinate')
-    ax.set_title('Sample Locations and Waypoints Path')
+    ax.set_xlabel('Easting [m]')
+    ax.set_ylabel('Northing [m]')
+    ax.set_title('Sample Locations')
 
     return fig
 
@@ -334,7 +341,7 @@ def beam_angles(points):
     return angle_tuples
 
 
-def path(dataset, bubble_dataset, start_time, speed, way_points, sample_frequency, threshold, pattern_func, data_variable='pCO2', sphere_radius=4):
+def path(dataset, way_points, start_time, speed, sample_frequency, threshold=np.inf, pattern_func=None, data_variable='pCO2', sphere_radius=1, synoptic=False):
     """
     Simulates the path of an Autonomous Underwater Vehicle (AUV) through waypoints and collects chemical data.
 
@@ -379,7 +386,7 @@ def path(dataset, bubble_dataset, start_time, speed, way_points, sample_frequenc
     num_samples = int(total_time * sample_frequency)
     sample_interval = 1 / sample_frequency
     # sample_times = np.array([np.datetime64(start_time) + np.timedelta64(round(t * 1000), 'ms') for t in np.arange(0, total_time, sample_interval)])
-    sample_times = np.array([np.datetime64(start_time) + np.timedelta64(round(t * 1000), 'ms') for t in np.arange(sample_interval, total_time, sample_interval)])
+    sample_times = np.array([np.datetime64(start_time) + np.timedelta64(round(t * 1000), 'ms') for t in np.arange(0, total_time, sample_interval)])
 
     for i in tqdm(range(len(way_points) - 1), desc="Path Waypoints and Sensor Sample Calculations"):
         start_point = way_points[i]
@@ -402,10 +409,15 @@ def path(dataset, bubble_dataset, start_time, speed, way_points, sample_frequenc
             z_sample = round(start_point[2] + ratio * (end_point[2] - start_point[2]), 2)
 
             # Append time information to the sample coordinates
-            sample_coords.append((x_sample, y_sample, z_sample, t))
+            if synoptic:
+                use_t = np.datetime64(start_time)
+            else:
+                use_t = t
+            
+            sample_coords.append((x_sample, y_sample, z_sample, use_t))
 
             # Collect chemical data
-            nearest_t = abs((dataset['time'].values - t)).argmin()
+            nearest_t = abs((dataset['time'].values - use_t)).argmin()
             metadata = (x_sample, y_sample, z_sample, nearest_t, sphere_radius)
             chemical_volume_data_mean, data = extract_chemical_data_for_volume(dataset, metadata, data_variable)
             measurements.append(chemical_volume_data_mean)
