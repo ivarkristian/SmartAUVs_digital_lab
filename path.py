@@ -25,7 +25,7 @@ import pandas as pd
 
 from lawnmower_path import generate_lawnmower_waypoints
 from bubble_utils import get_bubbles_from_beam, load_bubble_dataset
-from chem_utils import load_chemical_dataset, extract_chemical_data_for_volume
+from chem_utils import load_chemical_dataset, extract_chemical_data_from_dataset
 from patterns import *
 
 
@@ -419,7 +419,7 @@ def path(dataset, way_points, start_time, speed, sample_frequency, threshold=np.
             # Collect chemical data
             nearest_t = abs((dataset['time'].values - use_t)).argmin()
             metadata = (x_sample, y_sample, z_sample, nearest_t, sphere_radius)
-            chemical_volume_data_mean, data = extract_chemical_data_for_volume(dataset, metadata, data_variable)
+            chemical_volume_data_mean, data = extract_chemical_data_from_dataset(dataset, metadata, data_variable)
             measurements.append(chemical_volume_data_mean)
 
             # Check if the chemical data exceeds the threshold and sample in a pattern if true
@@ -427,7 +427,7 @@ def path(dataset, way_points, start_time, speed, sample_frequency, threshold=np.
                 pattern_coords = pattern_func(np.array([x_sample, y_sample, z_sample]))
                 for coord in pattern_coords:
                     metadata_pattern = (coord[0], coord[1], coord[2], str(t), sphere_radius)
-                    chemical_volume_data_mean, data = extract_chemical_data_for_volume(dataset, metadata_pattern, data_variable)
+                    chemical_volume_data_mean, data = extract_chemical_data_from_dataset(dataset, metadata_pattern, data_variable)
                     measurements.append(chemical_volume_data_mean)
                     sample_coords.append((coord[0], coord[1], coord[2], t))
 

@@ -17,6 +17,7 @@ plt.rcParams.update({
 })
 
 # %%
+# Define size and resolution of environment
 scenario_x_min = 0
 scenario_x_max = 250
 scenario_y_min = 0
@@ -36,7 +37,10 @@ x_data = np.linspace(path_x_min, path_x_max, resolution)
 y_data = np.linspace(path_y_min, path_y_max, resolution)
 depth = 67
 
-# Generate waypoints for the lawnmower path with specified parameters
+# %%
+# Generate waypoints for the lawnmower path with specified parameters 
+grid_spacings = [10, 20]
+
 waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypoints(
     x_data, y_data, width=10, min_turn_radius=5, siglay=depth, direction='x'
 )
@@ -44,15 +48,14 @@ waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypo
 # remove duplicate waypoints
 waypoints_with_turns = lp.remove_consecutive_duplicate_wps(waypoints_with_turns, 1e-3)
 
+# %%
+# Visualize the path with the domain background and labeled waypoints
 wp_x = waypoints_with_turns[:, 0]
 wp_y = waypoints_with_turns[:, 1]
 
 wp_x_min, wp_x_max = np.min(wp_x), np.max(wp_x)
 wp_y_min, wp_y_max = np.min(wp_y), np.max(wp_y)
 
-
-# %%
-# Domain boundaries for the plot
 x_mean = wp_x_min + (wp_x_max - wp_x_min)/2.0
 y_mean = wp_y_min + (wp_y_max - wp_y_min)/2.0
 
@@ -61,26 +64,7 @@ y_min = y_mean - (y_mean - np.min(wp_y))*np.sqrt(2.0)
 x_max = x_mean + (np.max(wp_x) - x_mean)*np.sqrt(2.0)
 y_max = y_mean + (np.max(wp_y) - y_mean)*np.sqrt(2.0)
 
-# Visualize the path with the domain background and labeled waypoints
 lp.scatter_plot_points_and_path(waypoints_with_turns[:, :2], x_min, x_max, y_min, y_max)
-
-# %%
-# Rotate waypoints
-angle_deg = 45.0
-
-# Subtract means
-x_off = (wp_x_max - wp_x_min)/2.0
-y_off = (wp_y_max - wp_y_min)/2.0
-
-z_coords = waypoints_with_turns[:, 2:]
-wp_to_rotate = waypoints_with_turns[:, :2] - [x_mean, y_mean]
-wp_rotated = path_utils.rotate_points(wp_to_rotate, angle_deg) + [x_mean, y_mean]
-waypoints_with_turns_rotated = np.hstack((wp_rotated, z_coords))
-
-# New domain boundaries for the plot
-#x_min, x_max = np.min(x_data), np.max(x_data)
-#y_min, y_max = np.min(y_data), np.max(y_data)
-lp.scatter_plot_points_and_path(waypoints_with_turns_rotated[:, :2], x_min, x_max, y_min, y_max)
 
 # %%
 # Load data set from path
@@ -130,15 +114,38 @@ importlib.reload(lp)
 # Extract using interpolating extract function path.path()
 start_time = dataset['time'].values[4]
 speed = 1.5
-way_points = waypoints_with_turns
+waypoints = waypoints_with_turns
 sample_freq = 1
-measurements, sample_coords = path.path(dataset, way_points, start_time, speed, sample_freq, data_variable='pH', synoptic=True)
+measurements, sample_coords = path.path(dataset, waypoints, start_time, speed, sample_freq, data_variable='pH', synoptic=True)
 
+# %%
 # Plot it
-vminmax = [val.min(), val.max()]
+vminmax = [min(measurements), max(measurements)]
 fig = path.plot(waypoints_with_turns, sample_coords, measurements, 'pH [m]', vminmax=vminmax)
 fig.show()
 
+# %%
+# Convert the list of tuples to a NumPy array
+filtered_data = [tup[:3] for tup in sample_coords]
+data_array = np.array(filtered_data)
+
+# %%
+# Rotate path
+angle_deg = 45.0
+
+# Subtract means
+x_off = (wp_x_max - wp_x_min)/2.0
+y_off = (wp_y_max - wp_y_min)/2.0
+
+z_coords = waypoints_with_turns[:, 2:]
+wp_to_rotate = waypoints_with_turns[:, :2] - [x_mean, y_mean]
+wp_rotated = path_utils.rotate_points(wp_to_rotate, angle_deg) + [x_mean, y_mean]
+waypoints_with_turns_rotated = np.hstack((wp_rotated, z_coords))
+
+# New domain boundaries for the plot
+#x_min, x_max = np.min(x_data), np.max(x_data)
+#y_min, y_max = np.min(y_data), np.max(y_data)
+lp.scatter_plot_points_and_path(waypoints_with_turns_rotated[:, :2], x_min, x_max, y_min, y_max)
 
 
 # %%

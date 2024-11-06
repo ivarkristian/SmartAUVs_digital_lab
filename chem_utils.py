@@ -36,7 +36,65 @@ def load_chemical_dataset(chem_data_path):
 
     return chem_dataset
 
-def extract_chemical_data_for_volume(dataset, metadata, data_variable):
+def extract_synoptic_chemical_data_from_depth(x_coords, y_coords, values, sample_coords, radius=1.0):
+    """
+    Extracts chemical data within a specified spherical volume and computes the average data value.
+
+    This function calculates the average of a data value within a spherical volume specified by the
+    target coordinates (x, y, z), time, and radius. It crops the data to exclude the outer boundary
+    condition mesh, calculates 3D distances, identifies points within the radius, and computes the
+    average value for those points.
+
+    Parameters
+    ----------
+    x_coords : array-like
+    y_coords : array-like
+    values : array-like
+        The chemical values for a compound, siglay and time.
+    sample_coords : array-like
+        An array-like or tuple containing the target coordinates (x_target, y_target)
+        of the spherical volume.
+
+    Returns
+    -------
+    float
+        The average data value within the specified spherical volume.
+    """
+    x_target, y_target = sample_coords
+
+    # Calculate target coordinates
+    #x_coord_target = np.min(x_coords) + x_target
+    #y_coord_target = np.min(y_coords) + y_target
+
+    # Calculate 3D distances from the target point
+    x_diff = x_coords - x_target
+    y_diff = y_coords - y_target
+
+    # Calculation of distances
+    distances = np.sqrt(
+        x_diff[:, np.newaxis]**2 + 
+        y_diff[:, np.newaxis]**2
+    )
+
+    # Find indices within the specified radius
+    within_radius_indices = np.where(distances <= radius)
+    #print(f'within_radius_indices: {(within_radius_indices)}')
+
+    # Extract unique indices within the radius
+    unique_indices_within_radius = np.unique(within_radius_indices[0])
+    #print(f'unique_indices_within_radius: {(unique_indices_within_radius)}')
+
+    # Extract data within the radius for the specified time and depth
+    data_within_radius = values[unique_indices_within_radius]
+    #print(f'data_within_radius: {(data_within_radius)}')
+
+    # Compute the average data value
+    average_data_value = data_within_radius.mean()
+
+    return average_data_value
+
+
+def extract_chemical_data_from_dataset(dataset, metadata, data_variable):
     """
     Extracts chemical data within a specified spherical volume and computes the average data value.
 
