@@ -1,6 +1,30 @@
 import torch
 import gpytorch
+import matplotlib.pyplot as plt
+import os
 from copy import deepcopy
+
+def plot_prediction(x, y, pred, path=None, vmin=None, vmax=None, spacing=0, rot=0, RMSE=0):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    if vmin == None:
+        vmin = pred.min()
+    if vmax == None:
+        vmax = pred.max()
+
+    scatter = ax.scatter(x, y, c=pred, cmap='coolwarm', s=1, vmin=vmin, vmax=vmax)
+    cbar = fig.colorbar(scatter, ax=ax)
+    cbar.set_label('Value')
+
+    if path is not None:
+        ax.scatter(path[:, 0], path[:, 1], color='grey', alpha=0.5, s=1, label='Path')
+    
+    # Add labels and title
+    ax.set_xlabel('Easting [m]')
+    ax.set_ylabel('Northing [m]')
+    ax.set_title(f'Prediction from spacing {spacing}, rotation {rot}. RMSE: {RMSE:.3}')
+    
+    #plt.close(fig)
+    return fig
 
 def normalize_tensor(tensor, range_min=0, range_max=1):
     min_val = tensor.min()

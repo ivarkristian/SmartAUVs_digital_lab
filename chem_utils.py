@@ -176,7 +176,7 @@ if __name__ == "__main__":
     data_variable = 'pCO2'
 
     # Extract chemical data and compute average value within the specified volume
-    chemical_volume_data_mean, data_within_radius = extract_chemical_data_for_volume(
+    chemical_volume_data_mean, data_within_radius = extract_chemical_data_from_dataset(
         chemical_dataset, metadata, data_variable
     )
 
