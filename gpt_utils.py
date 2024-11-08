@@ -23,7 +23,7 @@ def plot_prediction(x, y, pred, path=None, vmin=None, vmax=None, spacing=0, rot=
     ax.set_ylabel('Northing [m]')
     ax.set_title(f'Prediction from spacing {spacing}, rotation {rot}. RMSE: {RMSE:.3}')
     
-    #plt.close(fig)
+    plt.close(fig)
     return fig
 
 def normalize_tensor(tensor, range_min=0, range_max=1):
