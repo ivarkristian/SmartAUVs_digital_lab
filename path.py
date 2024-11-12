@@ -341,7 +341,7 @@ def beam_angles(points):
     return angle_tuples
 
 
-def path(dataset, way_points, start_time, speed, sample_frequency, threshold=np.inf, pattern_func=None, data_variable='pCO2', sphere_radius=1, synoptic=False):
+def path_with_samples(dataset, way_points, start_time, speed, sample_frequency, threshold=np.inf, pattern_func=None, data_variable='pCO2', sphere_radius=1, synoptic=False):
     """
     Simulates the path of an Autonomous Underwater Vehicle (AUV) through waypoints and collects chemical data.
 
@@ -433,6 +433,74 @@ def path(dataset, way_points, start_time, speed, sample_frequency, threshold=np.
 
     return measurements, sample_coords
 
+def path(waypoints, start_time, speed, sample_frequency, synoptic):
+    """
+    Simulates the path of an Autonomous Underwater Vehicle (AUV) through waypoints.
+
+    Parameters
+    ----------
+    way_points : list
+        List of waypoints
+    start_time : str
+        The start time of the simulation.
+    speed : float
+        The speed of the AUV in m/s.
+    way_points : list
+        List of waypoints (x, y, z) for the AUV to follow.
+    sample_frequency : float
+        The frequency of sampling in Hz.
+    synoptic : bool
+        Use synoptic sampling
+
+    Returns
+    -------
+    tuple
+        Sample coordinates (including time) along the path.
+    """
+    
+    sample_coords = []
+
+    waypoints = np.array(waypoints)
+    distances = np.sqrt(np.sum(np.diff(waypoints, axis=0) ** 2, axis=1))
+
+    times = distances / speed
+    cumulative_times = np.cumsum(times)
+
+    total_time = np.sum(times)
+    num_samples = int(total_time * sample_frequency)
+    sample_interval = 1 / sample_frequency
+    # sample_times = np.array([np.datetime64(start_time) + np.timedelta64(round(t * 1000), 'ms') for t in np.arange(0, total_time, sample_interval)])
+    sample_times = np.array([np.datetime64(start_time) + np.timedelta64(round(t * 1000), 'ms') for t in np.arange(0, total_time, sample_interval)])
+
+    for i in tqdm(range(len(waypoints) - 1), desc="Path Waypoints and Sensor Sample Calculations"):
+        start_point = waypoints[i]
+        end_point = waypoints[i + 1]
+
+        # Determine the time points within the current segment
+        segment_times = sample_times[
+            (sample_times >= (np.datetime64(start_time) + np.timedelta64(round((cumulative_times[i] - times[i]) * 1000), 'ms'))) &
+            (sample_times <= (np.datetime64(start_time) + np.timedelta64(round(cumulative_times[i] * 1000), 'ms')))
+        ]
+
+        for t in segment_times:
+            # Calculate the ratio of the current time to the segment duration
+            ratio = (t - (np.datetime64(start_time) + np.timedelta64(round((cumulative_times[i] - times[i]) * 1000), 'ms'))) / np.timedelta64(round(times[i] * 1000), 'ms')
+            ratio = np.clip(ratio, 0, 1)
+
+            # Compute the sample coordinates based on the ratio
+            x_sample = round(start_point[0] + ratio * (end_point[0] - start_point[0]), 2)
+            y_sample = round(start_point[1] + ratio * (end_point[1] - start_point[1]), 2)
+            z_sample = round(start_point[2] + ratio * (end_point[2] - start_point[2]), 2)
+
+            # Append time information to the sample coordinates
+            if synoptic:
+                use_t = np.datetime64(start_time)
+            else:
+                use_t = t
+            
+            sample_coords.append((x_sample, y_sample, z_sample, use_t))
+
+    return sample_coords
 
 
 def make_spiral_path(x_data, y_data, radius=30, num_t_points=50, min_siglay=69, max_siglay=55):

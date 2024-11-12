@@ -4,14 +4,14 @@ import matplotlib.pyplot as plt
 import os
 from copy import deepcopy
 
-def plot_prediction(x, y, pred, path=None, vmin=None, vmax=None, spacing=0, rot=0, RMSE=0):
+def plot_env(x, y, values, path=None, vmin=None, vmax=None, title='No title'):
     fig, ax = plt.subplots(figsize=(8, 6))
     if vmin == None:
-        vmin = pred.min()
+        vmin = values.min()
     if vmax == None:
-        vmax = pred.max()
+        vmax = values.max()
 
-    scatter = ax.scatter(x, y, c=pred, cmap='coolwarm', s=1, vmin=vmin, vmax=vmax)
+    scatter = ax.scatter(x, y, c=values, cmap='coolwarm', s=1, vmin=vmin, vmax=vmax)
     cbar = fig.colorbar(scatter, ax=ax)
     cbar.set_label('Value')
 
@@ -21,9 +21,9 @@ def plot_prediction(x, y, pred, path=None, vmin=None, vmax=None, spacing=0, rot=
     # Add labels and title
     ax.set_xlabel('Easting [m]')
     ax.set_ylabel('Northing [m]')
-    ax.set_title(f'Prediction from spacing {spacing}, rotation {rot}. RMSE: {RMSE:.3}')
+    ax.set_title(title)
     
-    plt.close(fig)
+    #plt.close()
     return fig
 
 def normalize_tensor(tensor, range_min=0, range_max=1):

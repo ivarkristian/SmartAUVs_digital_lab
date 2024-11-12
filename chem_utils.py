@@ -62,10 +62,6 @@ def extract_synoptic_chemical_data_from_depth(x_coords, y_coords, values, sample
     """
     x_target, y_target = sample_coords
 
-    # Calculate target coordinates
-    #x_coord_target = np.min(x_coords) + x_target
-    #y_coord_target = np.min(y_coords) + y_target
-
     # Calculate 3D distances from the target point
     x_diff = x_coords - x_target
     y_diff = y_coords - y_target
