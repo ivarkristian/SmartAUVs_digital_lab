@@ -472,7 +472,7 @@ def path(waypoints, start_time, speed, sample_frequency, synoptic):
     # sample_times = np.array([np.datetime64(start_time) + np.timedelta64(round(t * 1000), 'ms') for t in np.arange(0, total_time, sample_interval)])
     sample_times = np.array([np.datetime64(start_time) + np.timedelta64(round(t * 1000), 'ms') for t in np.arange(0, total_time, sample_interval)])
 
-    for i in tqdm(range(len(waypoints) - 1), desc="Path Waypoints and Sensor Sample Calculations"):
+    for i in range(len(waypoints) - 1):
         start_point = waypoints[i]
         end_point = waypoints[i + 1]
 

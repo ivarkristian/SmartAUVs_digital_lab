@@ -59,20 +59,16 @@ depth = 67
 background_threshold = 0.1
 # 'EnvClass' parameters
 d = 0.01 
-num_c = 2
+num_c = 1
 experiment_start_time = np.datetime64('1970-01-01T13:00:00.000000000')
 # common parameters
 sample_radius = 1.0
-grid_spacings = [10, 20]#[10, 20, 30, 40]
+grid_spacings = [10, 20, 30, 40]
+rot_dirs = range(-90, 91, 20)
 grid_types = ['plain', 'cross']
 kernel_types = ['SE', 'SE-ARD']
 kernel_training_iter = 100
 early_stopping = None
-
-# rotation is random from uniform probability [-180, 180]
-#rng = np.random.default_rng(seed=84)
-#rot_dirs = rng.integers(low=-89, high=90, endpoint=True, size=n_per_spacing)  # [-180 180]*n
-rot_dirs = range(-90, -86, 2)
 # travel speed and sample rate is constant at 1.0 m/s, 1.0 sample/s
 
 # %%
@@ -140,11 +136,12 @@ elif environment_type == 'elliptical':
     x = env_xy[:, 0]
     y = env_xy[:, 1]
 
-    rel_dists = env_xy - torch.tensor([sc_mean_x, sc_mean_y])
-    distances = torch.norm(rel_dists, dim=1) # scale with dilution
-    angles = torch.atan2(rel_dists[:, 1], rel_dists[:, 0]) # [-pi, pi]
-    rng = np.random.default_rng(seed=index)
-    env_list = rng.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
+    max_spacings_half = max(grid_spacings)/2.0
+    rng_y_offset = np.random.default_rng(seed=index**2)
+    y_offset_list = rng_y_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=num_c) # Generate envs based on these
+
+    rng_c = np.random.default_rng(seed=index)
+    env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
     env_desc = [str(c) for c in env_list]
 
 
@@ -182,10 +179,15 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
             title = f'Simulated feature: {env_desc[i]}'
                 
         if environment_type == 'elliptical':
+            y_offset = y_offset_list[i]
+            rel_dists = env_xy - torch.tensor([sc_mean_x - 25, sc_mean_y + y_offset])
+            distances = torch.norm(rel_dists, dim=1) # scale with dilution
+            angles = torch.atan2(rel_dists[:, 1], rel_dists[:, 0]) # [-pi, pi]
+    
             angles_cos = (-torch.cos(angles) + 1)*c
             angles_cos += 1
             env_values = gpt_utils.normalize_tensor(torch.exp(-(distances*d*(angles_cos))))
-            title = f'Elliptical feature (c = {env_desc[i]})'
+            title = f'Elliptical feature (c = {env_desc[i]}, y_offset = {y_offset})'
         
         num_above_threshold_env = (env_values > background_threshold).int().sum()
         
@@ -291,9 +293,13 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         
                         xy_to_predict_to_rot = xy_to_predict - torch.tensor([x_mean, y_mean])
                         xy_to_predict_rotated = path_utils.rotate_points(xy_to_predict_to_rot, -rot_dir) + torch.tensor([x_mean, y_mean])
-                        indices_to_compare = xy_to_predict_rotated.where(xy_to_predict_rotated[:, 0] <= path_x_max & xy_to_predict_rotated[:, 0] >= path_x_min)
-
-                        values_diff = env_values - pred.mean
+                        indices_low_x = xy_to_predict_rotated[:, 0] >= wp_x_min
+                        indices_high_x = xy_to_predict_rotated[:, 0] <= wp_x_max
+                        indices_low_y = xy_to_predict_rotated[:, 0] >= wp_y_min
+                        indices_high_y = xy_to_predict_rotated[:, 0] <= wp_y_max
+                        ind = indices_low_x & indices_high_x & indices_low_y & indices_high_y
+                        
+                        values_diff = env_values[ind] - pred.mean[ind]
                         RMSE = values_diff.pow(2).mean().sqrt()
                         
                         # Create plots of prediction
@@ -307,6 +313,7 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         data_dict = {
                             'index': index,
                             'env_desc': env_desc[i],
+                            'y_offset': y_offset,
                             'env_num': i,
                             'spacing_num': j,
                             'rot_num': k,

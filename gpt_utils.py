@@ -23,7 +23,7 @@ def plot_env(x, y, values, path=None, vmin=None, vmax=None, title='No title'):
     ax.set_ylabel('Northing [m]')
     ax.set_title(title)
     
-    #plt.close()
+    plt.close()
     return fig
 
 def normalize_tensor(tensor, range_min=0, range_max=1):
