@@ -1,7 +1,7 @@
 # %%
 import os
-import importlib
-import chem_utils
+#import importlib
+#import chem_utils
 import transform_to_paraview
 
 # %%
@@ -21,20 +21,20 @@ print(f'Files of type .nc:\n{nc_files}')
 
 # %%
 # Load the dataset and print attributes
-data_path = data_dir + nc_files[0]
-dataset = chem_utils.load_chemical_dataset(data_path)
-dataset
+#data_path = data_dir + nc_files[0]
+#dataset = chem_utils.load_chemical_dataset(data_path)
+#dataset
 
 # %%
 # Testing u, v -> w, d conversion
-importlib.reload(transform_to_paraview)
-data_vars = ['pH', 'u', 'v']
-data_path = data_dir + nc_files[0]
-transform_to_paraview.transform_netcdf_to_vtk(data_path, data_vars, resolution, output_dir)
+#importlib.reload(transform_to_paraview)
+#data_vars = ['pH', 'u', 'v']
+#data_path = data_dir + nc_files[0]
+#transform_to_paraview.transform_netcdf_to_vtk(data_path, data_vars, resolution, output_dir)
 
 # %%
 # Convert the whole scenario
-importlib.reload(transform_to_paraview)
+#importlib.reload(transform_to_paraview)
 # Typical data_vars for CO2 release
 # data_vars = ['salinity', 'temp', 'u', 'v', 'ww', 'DIC', 'dDIC', 'pH', 'dpH', 'pCO2', 'dpCO2']
 # Typical data_vars for CH4 release

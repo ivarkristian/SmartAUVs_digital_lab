@@ -85,15 +85,15 @@ def train_model(coords, values, model, iter=100, lr=0.1, early_delta=(False, 'ml
     print_number = 0
     c = 0
 
-    print(f'Training for {iter} iterations, lr = {lr}, early stopping = {e_delta}')
+    #print(f'Training for {iter} iterations, lr = {lr}, early stopping = {e_delta}')
 
     for i in range(iter):
         c += 1
         if c > p:
             c = 0
             print_number += percentage
-            if not debug:
-                print(f'...{print_number}%', end='')
+    #        if not debug:
+    #            print(f'...{print_number}%', end='')
         
         # Zero gradients from previous iteration
         optimizer.zero_grad()
@@ -129,6 +129,6 @@ def train_model(coords, values, model, iter=100, lr=0.1, early_delta=(False, 'ml
             print(f'')
             break
     
-    if not debug:
-        print(f'..100%')
+    #if not debug:
+    #    print(f'..100%')
     return

@@ -8,7 +8,7 @@ import path_utils
 import chem_utils
 import path
 
-# Disable LaTeX rendering to avoid the need for an external LaTeX installation
+# Disable LaTeX renderingß to avoid the need for an external LaTeX installation
 # Use MathText for LaTeX-like font rendering
 plt.rcParams.update({
     "text.usetex": False,  # Disable external LaTeX usage
@@ -86,13 +86,37 @@ ts = 4
 data_parameter = 'pH'
 
 for ts in range(4, 5):
-    for depth in range(66, 69):
+    for depth in range(67, 68):
         val_dataset = dataset[data_parameter].isel(time=ts, siglay=depth)
         val = val_dataset.values[:72710]
         x = val_dataset['x'].values[:72710]
         y = val_dataset['y'].values[:72710]
         x = x - x.min()
         y = y - y.min()
+        fig, ax = plt.subplots(figsize=(8, 6))
+        scatter = ax.scatter(x, y, c=val, cmap='coolwarm', s=2, vmin=val.min(), vmax=val.max())
+        cbar = fig.colorbar(scatter, ax=ax)
+        cbar.set_label('Value')
+
+        # Add labels and title
+        ax.set_xlabel('Easting [m]')
+        ax.set_ylabel('Northing [m]')
+        ax.set_title(f'TS {ts}, {data_parameter} at {depth}m depth')
+
+        plt.show()
+
+# %%
+# Get current
+data_parameter = 'u'
+
+for ts in range(4, 5):
+    for depth in range(67, 68):
+        val_dataset = dataset[data_parameter].isel(time=ts, siglay=depth)
+        val = val_dataset.values[:72710]
+        #x = val_dataset['x'].values[:72710]
+        #y = val_dataset['y'].values[:72710]
+        #x = x - x.min()
+        #y = y - y.min()
         fig, ax = plt.subplots(figsize=(8, 6))
         scatter = ax.scatter(x, y, c=val, cmap='coolwarm', s=2, vmin=val.min(), vmax=val.max())
         cbar = fig.colorbar(scatter, ax=ax)

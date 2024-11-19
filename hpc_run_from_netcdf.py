@@ -25,7 +25,7 @@ parser.add_argument("--directory", type=str, help="Path to output file directory
 #index = args.index
 index = 84
 #directory = args.directory
-directory = '../out_files'
+directory = '../out_files/run2_test'
 
 torch.set_default_dtype(torch.float64)
 
@@ -59,12 +59,12 @@ depth = 67
 background_threshold = 0.1
 # 'EnvClass' parameters
 d = 0.01 
-num_c = 1
+num_c = 4
 experiment_start_time = np.datetime64('1970-01-01T13:00:00.000000000')
 # common parameters
 sample_radius = 1.0
-grid_spacings = [10, 20, 30, 40]
-rot_dirs = range(-90, 91, 20)
+grid_spacings = [10, 20]
+rot_dirs = range(0, 91, 10)
 grid_types = ['plain', 'cross']
 kernel_types = ['SE', 'SE-ARD']
 kernel_training_iter = 100
@@ -137,11 +137,16 @@ elif environment_type == 'elliptical':
     y = env_xy[:, 1]
 
     max_spacings_half = max(grid_spacings)/2.0
+    rng_x_offset = np.random.default_rng(seed=index*3)
     rng_y_offset = np.random.default_rng(seed=index**2)
+    x_offset_list = rng_x_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=num_c) # Generate envs based on these
     y_offset_list = rng_y_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=num_c) # Generate envs based on these
+    #x_offset_list = [0]
+    #y_offset_list = [-15]
 
     rng_c = np.random.default_rng(seed=index)
     env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
+    #env_list = [7.2]
     env_desc = [str(c) for c in env_list]
 
 
@@ -179,8 +184,9 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
             title = f'Simulated feature: {env_desc[i]}'
                 
         if environment_type == 'elliptical':
+            x_offset = x_offset_list[i]
             y_offset = y_offset_list[i]
-            rel_dists = env_xy - torch.tensor([sc_mean_x - 25, sc_mean_y + y_offset])
+            rel_dists = env_xy - torch.tensor([sc_mean_x - 25 + x_offset, sc_mean_y + y_offset])
             distances = torch.norm(rel_dists, dim=1) # scale with dilution
             angles = torch.atan2(rel_dists[:, 1], rel_dists[:, 0]) # [-pi, pi]
     
@@ -188,8 +194,6 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
             angles_cos += 1
             env_values = gpt_utils.normalize_tensor(torch.exp(-(distances*d*(angles_cos))))
             title = f'Elliptical feature (c = {env_desc[i]}, y_offset = {y_offset})'
-        
-        num_above_threshold_env = (env_values > background_threshold).int().sum()
         
         print(f'Running environment - {title} ({i}/{len(env_list)})')
         # Create plots of environment
@@ -288,9 +292,8 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         with ct_predict, torch.no_grad(), gpytorch.settings.fast_pred_var():
                             pred = mdl.likelihood(mdl(xy_to_predict))
                         
-                        #mdl.print_named_parameters()
-                        # Compare single_pred with env_values
                         
+                        # Compare single_pred with env_values
                         xy_to_predict_to_rot = xy_to_predict - torch.tensor([x_mean, y_mean])
                         xy_to_predict_rotated = path_utils.rotate_points(xy_to_predict_to_rot, -rot_dir) + torch.tensor([x_mean, y_mean])
                         indices_low_x = xy_to_predict_rotated[:, 0] >= wp_x_min
@@ -302,13 +305,14 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         values_diff = env_values[ind] - pred.mean[ind]
                         RMSE = values_diff.pow(2).mean().sqrt()
                         
+                        # Number of samples above threshold
+                        num_above_threshold = (sample_values >= background_threshold).int().sum()
+                        num_above_threshold_env = (env_values[ind] >= background_threshold).int().sum()
+
                         # Create plots of prediction
                         title = f'Prediction (grid {spacing}, rot. {rot_dir}, {kernel_type}) RMSE: {RMSE:.4}'
                         fig = gpt_utils.plot_env(x, y, pred.mean, xy_rot, vmin=0.0, vmax=1.0, title=title)
                         pickle.dump(fig, file_out_pred)
-
-                        # Number of samples above threshold
-                        num_above_threshold = (sample_values > background_threshold).int().sum()
 
                         data_dict = {
                             'index': index,
@@ -326,7 +330,7 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                             'grid_type' : grid_type,
                             'RMSE': RMSE.item(),
                             'plume_samples': num_above_threshold.item(),
-                            'plume_percentage': (num_above_threshold/num_above_threshold_env).item()
+                            'plume_fraction': (num_above_threshold/num_above_threshold_env).item()
                         }
                             
                         #experiment.append(dict)
