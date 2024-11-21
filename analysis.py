@@ -59,7 +59,7 @@ corr_matrix = df_numerical.corr()
 spacings = [10, 20, 30, 40]
 kernel_types = ['SE', 'SE-ARD']
 
-for kernel_type in kernel_types:
+for i, kernel_type in enumerate(kernel_types):
     filter_values = {
         'angle_delta': [0, 90],
         'grid_type': 'plain',
@@ -94,7 +94,7 @@ for kernel_type in kernel_types:
     )
 
     # Customize the plot
-    plt.title(f'RMSE vs. Anisotropy for different grid spacings (Kernel: {kernel_type})', fontsize=16, fontweight='bold')
+    plt.title(f'RMSE vs. anisotropy for different spacings ({kernel_type} kernel)', fontsize=16, fontweight='bold', x=(0.48-i/100.0))
     plt.xlabel('Anisotropy', fontsize=14)
     plt.ylabel('RMSE', fontsize=14)
     plt.legend(title='Spacing', fontsize=12, title_fontsize=13)
@@ -357,7 +357,7 @@ advection_angles = [5, -75, -50, -20]
 tss = df_original['ts'].unique()
 titles = []
 for i, angle in enumerate(advection_angles):
-    titles.append(str(tss[i]) + r" ($\alpha$ = " + str(angle) + ')')
+    titles.append(str(tss[i]*10) + ' minutes,' + r" $\alpha$ = " + str(angle))
 
 # Initialize variables to collect image data and determine global vmin and vmax
 # Remove color bars and save figures to images
@@ -494,7 +494,7 @@ for ax in g.axes.flatten():
 
 # Add a suptitle
 g.figure.suptitle('RMSE by time step, spacing, and kernel type', fontsize=16, fontweight='bold')
-
+g.savefig('figures/' + 'netCDF_spacings.eps', format='eps', dpi=300)
 # Show the plot
 plt.show()
 
@@ -552,6 +552,7 @@ plt.ylabel('RMSE Difference', fontsize=14)
 #plt.axhline(0, color='black', linestyle='--', linewidth=1)
 plt.legend(title='Kernel Type')
 plt.tight_layout()
+plt.savefig('figures/' + 'netCDF_20C-10P.eps', format='eps', dpi=300)
 plt.show()
 
 # Case 2: Spacing 20 Plain vs. Spacing 40 Cross
@@ -600,6 +601,7 @@ plt.ylabel('RMSE Difference', fontsize=14)
 #plt.axhline(0, color='black', linestyle='--', linewidth=1)
 plt.legend(title='Kernel Type')
 plt.tight_layout()
+plt.savefig('figures/' + 'netCDF_40C-20P.eps', format='eps', dpi=300)
 plt.show()
 
 # %%
