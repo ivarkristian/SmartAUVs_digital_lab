@@ -76,7 +76,8 @@ nc_files = [s for s in files if s.endswith('.nc')]
 nc_files.sort()
 print(f'Files of type .nc:\n{nc_files}')
 
-data_file = data_dir + nc_files[0]
+file_num = 7
+data_file = data_dir + nc_files[file_num]
 dataset = chem_utils.load_chemical_dataset(data_file)
 
 
@@ -85,8 +86,8 @@ dataset = chem_utils.load_chemical_dataset(data_file)
 ts = 4
 data_parameter = 'pH'
 
-for ts in range(4, 5):
-    for depth in range(67, 68):
+for ts in range(0, 12):
+    for depth in range(66, 69):
         val_dataset = dataset[data_parameter].isel(time=ts, siglay=depth)
         val = val_dataset.values[:72710]
         x = val_dataset['x'].values[:72710]
@@ -94,14 +95,14 @@ for ts in range(4, 5):
         x = x - x.min()
         y = y - y.min()
         fig, ax = plt.subplots(figsize=(8, 6))
-        scatter = ax.scatter(x, y, c=val, cmap='coolwarm', s=2, vmin=val.min(), vmax=val.max())
+        scatter = ax.scatter(y, x, c=val, cmap='coolwarm', s=2, vmin=val.min(), vmax=val.max())
         cbar = fig.colorbar(scatter, ax=ax)
         cbar.set_label('Value')
 
         # Add labels and title
         ax.set_xlabel('Easting [m]')
         ax.set_ylabel('Northing [m]')
-        ax.set_title(f'TS {ts}, {data_parameter} at {depth}m depth')
+        ax.set_title(f'TS {file_num*12 + ts}, {data_parameter} at {depth}m depth')
 
         plt.show()
 

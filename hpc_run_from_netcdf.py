@@ -25,7 +25,7 @@ parser.add_argument("--directory", type=str, help="Path to output file directory
 #index = args.index
 index = 84
 #directory = args.directory
-directory = '../out_files/run2_test'
+directory = '../out_files/netCDF_run1'
 
 torch.set_default_dtype(torch.float64)
 
@@ -49,22 +49,24 @@ importlib.reload(gpt_class_environment)
 
 # %%
 # Setup experiment parameters
-environment_type = 'elliptical'
+environment_type = 'netCDF'
 
 # 'netCDF' parameters
 sample_variable = 'pH'
-experiment_time_offset = 4 # *10 minutes intervals
+#experiment_time_offset = 5 # *10 minutes intervals
 synoptic_sampling = True
-depth = 67
+times = [89]#[4, 81, 85, 89]
+depths = [68]#[67, 66, 66, 68]
+advection_angles = [-20]#[5, -75, -50, -20] # Inspect files
 background_threshold = 0.1
 # 'EnvClass' parameters
 d = 0.01 
-num_c = 4
+num_c = 1
 experiment_start_time = np.datetime64('1970-01-01T13:00:00.000000000')
 # common parameters
 sample_radius = 1.0
-grid_spacings = [10, 20]
-rot_dirs = range(0, 91, 10)
+grid_spacings = [10, 20, 30, 40]
+rot_dirs = range(-90, 91, 5)
 grid_types = ['plain', 'cross']
 kernel_types = ['SE', 'SE-ARD']
 kernel_training_iter = 100
@@ -105,30 +107,48 @@ if environment_type == 'netCDF':
     nc_files = [s for s in files if s.endswith('.nc')]
     nc_files.sort()
     print(f'Files of type .nc:\n{nc_files}')
+    env_list = []
+    env_desc = []
+    for i, time in enumerate(times):
 
-    data_file = os.path.join(data_dir, nc_files[0])
-    advection_angle = 5 # Inspect file
+        file_num = int(time/12)
+        experiment_time_offset = time%12
+        data_file = os.path.join(data_dir, nc_files[file_num])
 
-    dataset = chem_utils.load_chemical_dataset(data_file)
-    dataset_start_time = dataset['time'].values[0]
-    experiment_start_time = dataset['time'].values[0 + experiment_time_offset]
-    print(f'Loaded dataset from {data_file}')
-    print(f'Dataset starts at {dataset_start_time}, experiment starts at {experiment_start_time}')
+        dataset = chem_utils.load_chemical_dataset(data_file)
+        dataset_start_time = dataset['time'].values[0]
+        experiment_start_time = dataset['time'].values[0 + experiment_time_offset]
+        print(f'Loaded dataset from {data_file}')
+        print(f'File starts at {dataset_start_time}, experiment starts at {experiment_start_time}')
 
-    val_dataset = dataset[sample_variable].isel(time=experiment_time_offset, siglay=depth)
+        val_dataset = dataset[sample_variable].isel(time=experiment_time_offset, siglay=depths[i])
 
-    x_adj = val_dataset['x'].values[:72710] - min(val_dataset['x'].values[:72710])
-    y_adj = val_dataset['y'].values[:72710] - min(val_dataset['y'].values[:72710])
-    env_xy = torch.tensor(np.column_stack((x_adj, y_adj)), dtype=torch.float64)
-    x = torch.tensor(x_adj, dtype=torch.float64)
-    y = torch.tensor(y_adj, dtype=torch.float64)
-    env_list = [val_dataset.values[:72710]]
-    env_desc = [f'file: {data_file} time step: {experiment_time_offset} depth: {depth}']
+        x_adj = val_dataset['x'].values[:72710] - min(val_dataset['x'].values[:72710])
+        y_adj = val_dataset['y'].values[:72710] - min(val_dataset['y'].values[:72710])
+        env_xy = torch.tensor(np.column_stack((x_adj, y_adj)), dtype=torch.float64)
+        x = torch.tensor(x_adj, dtype=torch.float64)
+        y = torch.tensor(y_adj, dtype=torch.float64)
+        env_list.append(val_dataset.values[:72710])
+        env_desc.append(f'file: {data_file} time step: {experiment_time_offset} depth: {depths[i]}')
+        
+        # plot netCDF data set
+        fig, ax = plt.subplots(figsize=(8, 6))
+        scatter = ax.scatter(x, y, c=env_list[i], cmap='coolwarm', s=2)
+        cbar = fig.colorbar(scatter, ax=ax)
+        cbar.set_label('Value')
+
+        # Add labels and title
+        ax.set_xlabel('Easting [m]')
+        ax.set_ylabel('Northing [m]')
+        ax.set_title(f'TS {file_num*12 + experiment_time_offset}, {sample_variable} at {depths[i]}m depth')
+
+        plt.show()
+
 
 elif environment_type == 'elliptical':
     advection_angle = 0
     
-    # Create environment with scalar field based on c and d
+    # Create environment x and y locations
     env_x = np.linspace(scenario_x_min, scenario_x_max, sc_len_x, dtype=np.float64)
     env_y = np.linspace(scenario_y_min, scenario_y_max, sc_len_y, dtype=np.float64)
     env_xy = torch.tensor(np.column_stack((env_x, env_y)), dtype=torch.float64)
@@ -136,18 +156,20 @@ elif environment_type == 'elliptical':
     x = env_xy[:, 0]
     y = env_xy[:, 1]
 
+    # Define c parameter (determines anisotropy)
+    rng_c = np.random.default_rng(seed=index)
+    #env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
+    env_list = [0.1, 1.0, 2.0, 4.0, 8.0, 16.0]
+    env_desc = [str(c) for c in env_list]
+
+    # Define x and y offset of location
     max_spacings_half = max(grid_spacings)/2.0
     rng_x_offset = np.random.default_rng(seed=index*3)
     rng_y_offset = np.random.default_rng(seed=index**2)
-    x_offset_list = rng_x_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=num_c) # Generate envs based on these
-    y_offset_list = rng_y_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=num_c) # Generate envs based on these
+    x_offset_list = rng_x_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=len(env_list)) # Generate envs based on these
+    y_offset_list = rng_y_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=len(env_list)) # Generate envs based on these
     #x_offset_list = [0]
     #y_offset_list = [-15]
-
-    rng_c = np.random.default_rng(seed=index)
-    env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
-    #env_list = [7.2]
-    env_desc = [str(c) for c in env_list]
 
 
 # %%
@@ -179,6 +201,9 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
 
         if environment_type == 'netCDF':
             env_values = gpt_utils.normalize_tensor(torch.tensor(c, dtype=torch.float64))
+            advection_angle = advection_angles[i]
+            x_offset = 0
+            y_offset = 0
             if sample_variable == 'pH':
                 env_values = 1 - env_values
             title = f'Simulated feature: {env_desc[i]}'
@@ -193,7 +218,7 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
             angles_cos = (-torch.cos(angles) + 1)*c
             angles_cos += 1
             env_values = gpt_utils.normalize_tensor(torch.exp(-(distances*d*(angles_cos))))
-            title = f'Elliptical feature (c = {env_desc[i]}, y_offset = {y_offset})'
+            title = f'Elliptical feature (c = {env_desc[i]}, x_offset = {x_offset}, y_offset = {y_offset})'
         
         print(f'Running environment - {title} ({i}/{len(env_list)})')
         # Create plots of environment
@@ -205,7 +230,7 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
 
             # Generate waypoints for the lawnmower path with specified parameters 
             waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypoints(
-                x_data, y_data, width=spacing, min_turn_radius=int(spacing/2), siglay=depth, direction='x'
+                x_data, y_data, width=spacing, min_turn_radius=int(spacing/2), siglay=depths[i], direction='x'
             )
 
             # remove duplicate waypoints
@@ -233,8 +258,9 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
 
             # Prepare for cross grid_type
             cross_waypoints_with_turns, cross_x_coords, cross_y_coords, cross_z_coords = lp.generate_lawnmower_waypoints(
-                        x_data, y_data, width=spacing, min_turn_radius=int(spacing/2), siglay=depth, direction='y'
-                    )
+                        x_data, y_data, width=spacing, min_turn_radius=int(spacing/2), siglay=depths[i], direction='y'
+            )
+            
             # remove duplicate waypoints
             cross_waypoints = lp.remove_consecutive_duplicate_wps(cross_waypoints_with_turns, 1e-3)
             cross_sample_coords_list = path.path(cross_waypoints, ts, speed, sample_freq, synoptic=synoptic_sampling)
