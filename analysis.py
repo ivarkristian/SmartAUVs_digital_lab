@@ -298,7 +298,7 @@ df.dropna(subset=['anisotropy', 'angle_delta', 'kernel_type', 'grid_type', 'RMSE
 # Exploratory analysis using 80-90 degrees angle_delta
 filters = {
     'grid_type': 'plain',
-    'angle_delta': [80, 90]
+    'angle_delta': [0, 90]
 }
 
 # Filter the DataFrame
@@ -306,7 +306,6 @@ df = analysis_utils.filter_df(df, filters)
 
 plt.figure(figsize=(6, 4))
 sns.histplot(data=df, x='RMSE', hue='spacing', kde=False, multiple='stack')
-#sns.histplot(df['RMSE'], kde=True)
 plt.title('Distribution of RMSE', fontsize=16, fontweight='bold')
 plt.xlabel('RMSE')
 plt.ylabel('Frequency')
@@ -314,7 +313,7 @@ plt.savefig('figures/' + f'fig4_histogram.eps', format='eps', dpi=300)
 plt.show()
 
 plt.figure(figsize=(6, 4))
-sns.boxplot(x='kernel_type', y='RMSE', hue='spacing', data=df)
+sns.boxplot(x='kernel_type', y='RMSE', hue='spacing', data=df, whis=(0, 100))
 plt.title('RMSE by Kernel Type and grid spacing', fontsize=16, fontweight='bold')
 plt.xlabel('Kernel Type')
 plt.ylabel('RMSE')
@@ -391,7 +390,7 @@ for i, (img, ax) in enumerate(zip(image_list, axes)):
     ax.axis('off')
     #ax.set_title(titles[i], fontsize=12)
 
-fig_combined.suptitle('Emission scenarios', fontsize=16, fontweight='bold', x=0.4, y=0.96)
+fig_combined.suptitle('Emission snapshots', fontsize=16, fontweight='bold', x=0.4, y=0.96)
 
 # Adjust layout to minimize space between subplots and make space for the color bar
 fig_combined.subplots_adjust(
@@ -492,8 +491,13 @@ g.figure.subplots_adjust(hspace=0.2, wspace=0.1)
 for ax in g.axes.flatten():
     ax.tick_params(axis='x')
 
+# Manually set the titles for each subplot
+
+for i, ax in enumerate(g.axes.flat):
+    ax.set_title(f"{df_original['ts'].unique()[i]*10} minutes, " + r'$\alpha$=' + f"{advection_angles[i]}")
+
 # Add a suptitle
-g.figure.suptitle('RMSE by time step, spacing, and kernel type', fontsize=16, fontweight='bold')
+g.figure.suptitle('RMSE by snapshot, spacing, and kernel type', fontsize=16, fontweight='bold')
 g.savefig('figures/' + 'netCDF_spacings.eps', format='eps', dpi=300)
 # Show the plot
 plt.show()
