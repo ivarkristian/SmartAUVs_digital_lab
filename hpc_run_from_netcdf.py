@@ -25,7 +25,7 @@ parser.add_argument("--directory", type=str, help="Path to output file directory
 #index = args.index
 index = 84
 #directory = args.directory
-directory = '../out_files/netCDF_run1'
+directory = '../out_files/run2_test'
 
 torch.set_default_dtype(torch.float64)
 
@@ -49,7 +49,7 @@ importlib.reload(gpt_class_environment)
 
 # %%
 # Setup experiment parameters
-environment_type = 'netCDF'
+environment_type = 'elliptical'
 
 # 'netCDF' parameters
 sample_variable = 'pH'
@@ -61,12 +61,12 @@ advection_angles = [-20]#[5, -75, -50, -20] # Inspect files
 background_threshold = 0.1
 # 'EnvClass' parameters
 d = 0.01 
-num_c = 1
+num_c = 50
 experiment_start_time = np.datetime64('1970-01-01T13:00:00.000000000')
 # common parameters
 sample_radius = 1.0
-grid_spacings = [10, 20, 30, 40]
-rot_dirs = range(-90, 91, 5)
+grid_spacings = [10, 20, 40]
+rot_dirs = range(0, 91, 5)
 grid_types = ['plain', 'cross']
 kernel_types = ['SE', 'SE-ARD']
 kernel_training_iter = 100
@@ -158,9 +158,11 @@ elif environment_type == 'elliptical':
 
     # Define c parameter (determines anisotropy)
     rng_c = np.random.default_rng(seed=index)
-    #env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
-    env_list = [0.1, 1.0, 2.0, 4.0, 8.0, 16.0]
+    env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
+    #env_list = [1.0, 180.0]
     env_desc = [str(c) for c in env_list]
+
+    depths = np.ones_like(env_list)
 
     # Define x and y offset of location
     max_spacings_half = max(grid_spacings)/2.0
@@ -168,8 +170,8 @@ elif environment_type == 'elliptical':
     rng_y_offset = np.random.default_rng(seed=index**2)
     x_offset_list = rng_x_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=len(env_list)) # Generate envs based on these
     y_offset_list = rng_y_offset.integers(low=-max_spacings_half, high=max_spacings_half, size=len(env_list)) # Generate envs based on these
-    #x_offset_list = [0]
-    #y_offset_list = [-15]
+    #x_offset_list = [0, 0]
+    #y_offset_list = [0, 0]
 
 
 # %%
@@ -289,11 +291,11 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         if kernel_type == 'SE-ARD':
                             # Rotate system for ard kernel
                             xy_to_rot_ard = xy_rot - torch.tensor([x_mean, y_mean])
-                            xy_to_train = path_utils.rotate_points(xy_to_rot_ard, -advection_angle) + torch.tensor([x_mean, y_mean])
+                            xy_to_train = path_utils.rotate_points(xy_to_rot_ard, advection_angle) + torch.tensor([x_mean, y_mean])
                             x_mean_env = scenario_x_min + (scenario_x_max - scenario_x_min)/2.0
                             y_mean_env = scenario_y_min + (scenario_y_max - scenario_y_min)/2.0
                             env_xy_to_rot_ard = env_xy - torch.tensor([x_mean_env, y_mean_env])
-                            xy_to_predict = path_utils.rotate_points(env_xy_to_rot_ard, -advection_angle) + torch.tensor([x_mean_env, y_mean_env])
+                            xy_to_predict = path_utils.rotate_points(env_xy_to_rot_ard, advection_angle) + torch.tensor([x_mean_env, y_mean_env])
                             kernel_name = 'scale_rbf_ard'
                         else:
                             xy_to_train = xy_rot
@@ -324,8 +326,8 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         xy_to_predict_rotated = path_utils.rotate_points(xy_to_predict_to_rot, -rot_dir) + torch.tensor([x_mean, y_mean])
                         indices_low_x = xy_to_predict_rotated[:, 0] >= wp_x_min
                         indices_high_x = xy_to_predict_rotated[:, 0] <= wp_x_max
-                        indices_low_y = xy_to_predict_rotated[:, 0] >= wp_y_min
-                        indices_high_y = xy_to_predict_rotated[:, 0] <= wp_y_max
+                        indices_low_y = xy_to_predict_rotated[:, 1] >= wp_y_min
+                        indices_high_y = xy_to_predict_rotated[:, 1] <= wp_y_max
                         ind = indices_low_x & indices_high_x & indices_low_y & indices_high_y
                         
                         values_diff = env_values[ind] - pred.mean[ind]
@@ -343,6 +345,7 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         data_dict = {
                             'index': index,
                             'env_desc': env_desc[i],
+                            'x_offset': x_offset,
                             'y_offset': y_offset,
                             'env_num': i,
                             'spacing_num': j,
@@ -358,8 +361,7 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                             'plume_samples': num_above_threshold.item(),
                             'plume_fraction': (num_above_threshold/num_above_threshold_env).item()
                         }
-                            
-                        #experiment.append(dict)
+
                         pickle.dump(data_dict, file_out)
 
 print(datetime.now().strftime('%Y-%m-%d %H:%M:%S') + ' Done!')

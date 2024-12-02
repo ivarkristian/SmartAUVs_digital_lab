@@ -19,7 +19,7 @@ plt.rcParams.update({
 })
 # %%
 # Load pickles from a directory
-directory_path = '/Users/ikw/code/out_files/run1'
+directory_path = '/Users/ikw/code/out_files/run2'
 data_list = pickle_reader.collect_data_from_directory(directory_path, '.pickle')
 
 # %%
@@ -27,9 +27,10 @@ df_original = pd.DataFrame(data_list)
 # Display the DataFrame
 print("DataFrame created from pickled dictionaries:")
 df_original['env_desc'] = np.float64(df_original['env_desc'])
-#df_original['x_offset'] = np.float64(df_original['x_offset'])
+df_original['x_offset'] = np.float64(df_original['x_offset'])
 df_original['y_offset'] = np.float64(df_original['y_offset'])
 df_original['anisotropy'] = df_original['env_desc']
+# Use angle_delta instead of rot
 df_original['angle_delta'] = 90 - df_original['rot']
 
 print(df_original)
@@ -38,78 +39,147 @@ print(df_original)
 # (TODO?): Adjust anisotropy to height/length ratio
 # Show example simulations
 
-# Use angle_delta instead of rot
-# angle_delta = anisotropy_angle - rot_dir, and anisotropy_angle was set to 0 for elliptical environments.
-# We want a grid angle that describes the angle between flight lines and anisotropy. Since rot_dir = 0 corresponds to a grid angle
-# of 90, and we simulate rot_dir 0-90, we can compute the grid angle as 90-rot_dir  (Or angle_delta + 90).
-
 # Create df_numerical and df_interesting
-df_numerical = df_original.drop(['index', 'env_desc', 'env_num', 'spacing_num', 'rot_num', 'ct_train', 'ct_predict', 'kernel_type', 'grid_type'], axis=1)
+df_numerical = df_original.drop(['index', 'env_desc', 'env_num', 'spacing_num', 'rot_num', 'ct_train', 'ct_predict', 'rot', 'kernel_type', 'grid_type'], axis=1)
 df_interesting = df_original.drop(['index', 'env_desc', 'env_num', 'rot_num', 'ct_train', 'ct_predict', 'rot', 'spacing_num', 'plume_samples'], axis=1)
 
 # %%
-corr_matrix = df_numerical.corr()
+# Create a heatmap, with only plain pattern entries
+df = df_original.drop(['x_offset', 'y_offset', 'index', 'env_desc', 'env_num', 'rot_num', 'ct_train', 'ct_predict', 'rot', 'spacing_num'], axis=1)
+filter_values = {
+        'grid_type': 'plain',
+        'kernel_type': 'SE-ARD'
+}
+df_filtered = analysis_utils.filter_df(df, filter_values)
+df_corr = df_filtered.drop(['grid_type', 'kernel_type'], axis=1)
 
+corr_matrix = df_corr.corr()
+
+# Generate a mask for the upper triangle
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+
+plt.figure(figsize=(12, 10))
+#sns.heatmap(corr_matrix, annot=True, mask=mask, fmt=".2f", cmap='coolwarm', vmin=-1.0, vmax=1.0)
+# Create the heatmap
+ax = sns.heatmap(
+    corr_matrix,
+    annot=True,
+    mask=mask,
+    fmt=".2f",
+    cmap='coolwarm',
+    square=True,
+    linewidths=.5,
+    vmin=-1.0,
+    vmax=1.0,
+)
+plt.title('Correlation Matrix Heatmap', fontsize=14, fontweight='bold')
+plt.show()
+
+# %%
+# Pair plot
+df_plain = df_filtered.drop(['grid_type'], axis=1)
+sns.pairplot(df_plain, hue='kernel_type')
+plt.show()
 
 # %%
 # Investigate the correlation between grid spacing and RMSE (and plume samples).
 # Select all angles, only plain grid_type. Plot RMSE against spacing first for SE and then for SE-ARD.
 # Define the constant values for other variables
 
-spacings = [10, 20, 30, 40]
+spacings = {10, 20, 40}
 kernel_types = ['SE', 'SE-ARD']
 
 for i, kernel_type in enumerate(kernel_types):
     filter_values = {
         'angle_delta': [0, 90],
         'grid_type': 'plain',
-        'kernel_type': kernel_type
+        'kernel_type': kernel_type,
+        'spacing': spacings
     }
 
     df_filtered = analysis_utils.filter_df(df_interesting, filter_values)
     # Sort the DataFrame
     df_filtered = df_filtered.sort_values(['spacing', 'anisotropy'])
 
-    # Get unique spacing values
-    spacing_values = sorted(df_filtered['spacing'].unique())
+    # Compute mean and standard deviation
+    grouped = df_filtered.groupby(['anisotropy', 'spacing']).agg({'RMSE': ['mean', 'sem']}).reset_index()
+    grouped.columns = ['anisotropy', 'spacing', 'RMSE_mean', 'RMSE_se']
 
-    # Set the plotting style and palette
-    sns.set_theme(font='Dejavu Serif', style='whitegrid', context='paper')
+    # Define the window size
+    window_size = 5  # Adjust as needed
 
-    # Create a custom color palette
-    palette = sns.color_palette("viridis", n_colors=len(spacing_values))
+    # Sort the data
+    grouped = grouped.sort_values(by=['spacing', 'anisotropy'])
 
-    # Create the line plot
+    # Initialize a list to store the smoothed data
+    smoothed_data = []
+
+    # Apply rolling mean with adaptive window lengths
+    for spacing in grouped['spacing'].unique():
+        subset = grouped[grouped['spacing'] == spacing].copy()
+        subset['RMSE_mean_smooth'] = subset['RMSE_mean'].rolling(
+            window=window_size, min_periods=1, center=True).mean()
+        subset['RMSE_se_smooth'] = subset['RMSE_se'].rolling(
+            window=window_size, min_periods=1, center=True).mean()
+        smoothed_data.append(subset)
+
+    # Combine the smoothed data
+    smoothed_grouped = pd.concat(smoothed_data)
+
+    # Initialize the palette
+    palette = sns.color_palette("Set2", n_colors=smoothed_grouped['spacing'].nunique())
+
+    # Initialize the plot
     plt.figure(figsize=(8, 6))
+    ax = plt.gca()
 
-    sns.lineplot(
-        data=df_filtered,
-        x='anisotropy',
-        y='RMSE',
-        hue='spacing',
-        palette=palette,
-        linewidth=2.0,
-        #marker='o',
-        markersize=8
-    )
+    # Plot the mean line for each 'spacing'
+    for idx, spacing in enumerate(smoothed_grouped['spacing'].unique()):
+        subset = smoothed_grouped[smoothed_grouped['spacing'] == spacing]
+        ax.plot(
+            subset['anisotropy'],
+            subset['RMSE_mean_smooth'],
+            label=f'Spacing {spacing}',
+            color=palette[idx],
+            linewidth=2.0,
+            markersize=8
+        )
+        
+        # Plot dashed lines for upper and lower bounds
+        ax.plot(
+            subset['anisotropy'],
+            subset['RMSE_mean_smooth'] + subset['RMSE_se_smooth'],
+            linestyle='--',
+            color=palette[idx],
+            linewidth=1.0,
+        )
+        ax.plot(
+            subset['anisotropy'],
+            subset['RMSE_mean_smooth'] - subset['RMSE_se_smooth'],
+            linestyle='--',
+            color=palette[idx],
+            linewidth=1.0,
+        )
 
-    # Customize the plot
-    plt.title(f'RMSE vs. anisotropy for different spacings ({kernel_type} kernel)', fontsize=16, fontweight='bold', x=(0.48-i/100.0))
-    plt.xlabel('Anisotropy', fontsize=14)
-    plt.ylabel('RMSE', fontsize=14)
-    plt.legend(title='Spacing', fontsize=12, title_fontsize=13)
+    # Adjust the labels and title
+    ax.set_xlabel('Anisotropy', fontsize=14)
+    ax.set_ylabel('RMSE', fontsize=14)
+    ax.set_title(f'RMSE vs. anisotropy for different spacings ({kernel_type} kernel)', fontsize=16, fontweight='bold', x=(0.48-i/100.0))
+
+    # Show the legend
+    ax.legend(title='Spacing', fontsize=12, title_fontsize=13)
+
+    # Display the plot
     plt.tight_layout()
-
     plt.savefig('figures/' + f'fig1_{kernel_type}.eps', format='eps', dpi=300)
-    # Show the plot
     plt.show()
 
 # %%
-# !!!Remember x_offset below!!! Investigate effect of grid pattern vs. plain pattern (with the same number of samples).
+# Investigate effect of grid pattern vs. plain pattern (with the same number of samples).
 # Compare difference in RMSE for all anisotropies
 
 # Define merge keys
-merge_keys = ['y_offset', 'angle_delta', 'kernel_type', 'anisotropy']
+merge_keys = ['x_offset', 'y_offset', 'angle_delta', 'kernel_type', 'anisotropy']
 
 # Case 1: Spacing 10 Plain vs. Spacing 20 Cross
 filter_values = {
@@ -136,27 +206,59 @@ merged_df1 = pd.merge(
 )
 
 # Compute RMSE difference
-merged_df1['RMSE_difference'] = merged_df1['RMSE_B'] - merged_df1['RMSE_A']
+merged_df1['RMSE_difference'] = (merged_df1['RMSE_B'] / merged_df1['RMSE_A'])
 
-# Sort data
-merged_df1 = merged_df1.sort_values('anisotropy')
+# Compute mean and standard deviation
+grouped = merged_df1.groupby(['anisotropy', 'kernel_type']).agg({'RMSE_difference': ['mean']}).reset_index()
+grouped.columns = ['anisotropy', 'kernel_type', 'RMSE_ratio_mean']
+
+# Sort the data
+grouped = grouped.sort_values(by=['kernel_type', 'anisotropy'])
+
+# Initialize a list to store the smoothed data
+smoothed_data = []
+
+# Apply rolling mean with adaptive window lengths
+for kernel in grouped['kernel_type'].unique():
+    subset = grouped[grouped['kernel_type'] == kernel].copy()
+    subset['RMSE_ratio_mean_smooth'] = subset['RMSE_ratio_mean'].rolling(
+        window=window_size, min_periods=1, center=True).mean()
+    smoothed_data.append(subset)
+
+# Combine the smoothed data
+smoothed_grouped = pd.concat(smoothed_data)
 
 # Plotting for Case 1
 sns.set_theme(font='Dejavu Serif', style='whitegrid', context='paper')
 
 plt.figure(figsize=(8, 6))
-sns.lineplot(
+ax = plt.gca()
+
+# Plot the mean line for each 'spacing'
+for idx, kernel_type in enumerate(smoothed_grouped['kernel_type'].unique()):
+    subset = smoothed_grouped[smoothed_grouped['kernel_type'] == kernel_type]
+    ax.plot(
+        subset['anisotropy'],
+        subset['RMSE_ratio_mean_smooth'],
+        label=kernel_type,
+        color=palette[idx],
+        linewidth=2.0,
+        markersize=8
+    )
+
+
+""" sns.lineplot(
     data=merged_df1,
     x='anisotropy',
     y='RMSE_difference',
     hue='kernel_type',  # If multiple kernel types
     linewidth=2.0
-)
-plt.title('Difference in RMSE vs. Anisotropy\n(Spacing 20 Cross - Spacing 10 Plain)', fontsize=16, fontweight='bold')
+) """
+plt.title('Difference in RMSE vs. Anisotropy\n(Spacing 20 Cross / Spacing 10 Plain)', fontsize=16, fontweight='bold')
 plt.xlabel('Anisotropy', fontsize=14)
-plt.ylabel('RMSE Difference', fontsize=14)
+plt.ylabel('RMSE ratio', fontsize=14)
 #plt.axhline(0, color='black', linestyle='--', linewidth=1)
-plt.legend(title='Kernel Type')
+plt.legend(title='Kernel type', fontsize=12, title_fontsize=13)
 plt.tight_layout()
 plt.savefig('figures/' + f'fig2_20C-10P.eps', format='eps', dpi=300)
 plt.show()
@@ -186,26 +288,51 @@ merged_df2 = pd.merge(
 )
 
 # Compute RMSE difference
-merged_df2['RMSE_difference'] = merged_df2['RMSE_B'] - merged_df2['RMSE_A']
+merged_df2['RMSE_difference'] = (merged_df2['RMSE_B'] / merged_df2['RMSE_A'])
 
-# Sort data
-merged_df2 = merged_df2.sort_values('anisotropy')
+# Compute mean and standard deviation
+grouped = merged_df2.groupby(['anisotropy', 'kernel_type']).agg({'RMSE_difference': ['mean']}).reset_index()
+grouped.columns = ['anisotropy', 'kernel_type', 'RMSE_ratio_mean']
 
-# Plotting for Case 2
+# Sort the data
+grouped = grouped.sort_values(by=['kernel_type', 'anisotropy'])
+
+# Initialize a list to store the smoothed data
+smoothed_data = []
+
+# Apply rolling mean with adaptive window lengths
+for kernel in grouped['kernel_type'].unique():
+    subset = grouped[grouped['kernel_type'] == kernel].copy()
+    subset['RMSE_ratio_mean_smooth'] = subset['RMSE_ratio_mean'].rolling(
+        window=window_size, min_periods=1, center=True).mean()
+    smoothed_data.append(subset)
+
+# Combine the smoothed data
+smoothed_grouped = pd.concat(smoothed_data)
+
+# Plotting for Case 1
+sns.set_theme(font='Dejavu Serif', style='whitegrid', context='paper')
+
 plt.figure(figsize=(8, 6))
-sns.lineplot(
-    data=merged_df2,
-    x='anisotropy',
-    y='RMSE_difference',
-    hue='kernel_type',  # If multiple kernel types
-    linewidth=2.5,
-    palette='Set2'
-)
-plt.title('Difference in RMSE vs. Anisotropy\n(Spacing 40 Cross - Spacing 20 Plain)', fontsize=16, fontweight='bold')
+ax = plt.gca()
+
+# Plot the mean line for each 'spacing'
+for idx, kernel_type in enumerate(smoothed_grouped['kernel_type'].unique()):
+    subset = smoothed_grouped[smoothed_grouped['kernel_type'] == kernel_type]
+    ax.plot(
+        subset['anisotropy'],
+        subset['RMSE_ratio_mean_smooth'],
+        label=kernel_type,
+        color=palette[idx],
+        linewidth=2.0,
+        markersize=8
+    )
+
+plt.title('RMSE ration vs. Anisotropy\n(Spacing 40 Cross / Spacing 20 Plain)', fontsize=16, fontweight='bold')
 plt.xlabel('Anisotropy', fontsize=14)
-plt.ylabel('RMSE Difference', fontsize=14)
+plt.ylabel('RMSE ratio', fontsize=14)
 #plt.axhline(0, color='black', linestyle='--', linewidth=1)
-plt.legend(title='Kernel Type')
+plt.legend(title='Kernel type', fontsize=12, title_fontsize=13)
 plt.tight_layout()
 plt.savefig('figures/' + f'fig2_40C-20P.eps', format='eps', dpi=300)
 plt.show()
@@ -218,15 +345,26 @@ angle_delta_intervals = {
     '31-60': [31, 60],
     '61-90': [61, 90]
 }
+angle_delta_intervals_narrow = {
+    '0-10': [0, 10],
+    '11-20': [11, 20],
+    '21-30': [21, 30],
+    '31-40': [31, 40],
+    '41-50': [41, 50],
+    '51-60': [51, 60],
+    '61-70': [61, 70],
+    '71-80': [71, 80],
+    '81-90': [81, 90]
+}
 
 for kernel in kernel_types:
     plt.figure(figsize=(8, 6))
     
     # Initialize a color palette
-    palette = sns.color_palette("tab10", n_colors=len(angle_delta_intervals))
+    palette = sns.color_palette("tab10", n_colors=len(angle_delta_intervals_narrow))
     
     # Loop over each rot interval
-    for idx, (interval_name, interval_range) in enumerate(angle_delta_intervals.items()):
+    for idx, (interval_name, interval_range) in enumerate(angle_delta_intervals_narrow.items()):
         # Define filters
         filters = {
             'grid_type': 'plain',

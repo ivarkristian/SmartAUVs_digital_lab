@@ -42,7 +42,7 @@ depth = 67
 grid_spacings = [10, 20]
 
 waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypoints(
-    x_data, y_data, width=10, min_turn_radius=5, siglay=depth, direction='x'
+    x_data, y_data, width=20, min_turn_radius=5, siglay=depth, direction='x'
 )
 
 # remove duplicate waypoints
