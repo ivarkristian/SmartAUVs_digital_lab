@@ -9,6 +9,7 @@ import seaborn as sns
 import analysis_utils
 import matplotlib.cm as cm
 import matplotlib.colors as colors
+from matplotlib.lines import Line2D
 
 # Disable LaTeX renderingß to avoid the need for an external LaTeX installation
 # Use MathText for LaTeX-like font rendering
@@ -47,8 +48,8 @@ df_interesting = df_original.drop(['index', 'env_desc', 'env_num', 'rot_num', 'c
 # Create a heatmap, with only plain pattern entries
 df = df_original.drop(['x_offset', 'y_offset', 'index', 'env_desc', 'env_num', 'rot_num', 'ct_train', 'ct_predict', 'rot', 'spacing_num'], axis=1)
 filter_values = {
-        'grid_type': 'plain',
-        'kernel_type': 'SE-ARD'
+        'grid_type': 'plain'
+#        'kernel_type': 'SE-ARD'
 }
 df_filtered = analysis_utils.filter_df(df, filter_values)
 df_corr = df_filtered.drop(['grid_type', 'kernel_type'], axis=1)
@@ -106,7 +107,7 @@ for i, kernel_type in enumerate(kernel_types):
     grouped.columns = ['anisotropy', 'spacing', 'RMSE_mean', 'RMSE_se']
 
     # Define the window size
-    window_size = 5  # Adjust as needed
+    window_size = 20  # Adjust as needed
 
     # Sort the data
     grouped = grouped.sort_values(by=['spacing', 'anisotropy'])
@@ -139,7 +140,7 @@ for i, kernel_type in enumerate(kernel_types):
         ax.plot(
             subset['anisotropy'],
             subset['RMSE_mean_smooth'],
-            label=f'Spacing {spacing}',
+            label=f'{spacing}',
             color=palette[idx],
             linewidth=2.0,
             markersize=8
@@ -171,7 +172,7 @@ for i, kernel_type in enumerate(kernel_types):
 
     # Display the plot
     plt.tight_layout()
-    plt.savefig('figures/' + f'fig1_{kernel_type}.eps', format='eps', dpi=300)
+    plt.savefig('figures/' + f'spacings_anisotropy_{kernel_type}.eps', format='eps', dpi=300)
     plt.show()
 
 # %%
@@ -215,6 +216,7 @@ grouped.columns = ['anisotropy', 'kernel_type', 'RMSE_ratio_mean']
 # Sort the data
 grouped = grouped.sort_values(by=['kernel_type', 'anisotropy'])
 
+window_size = 20
 # Initialize a list to store the smoothed data
 smoothed_data = []
 
@@ -254,13 +256,13 @@ for idx, kernel_type in enumerate(smoothed_grouped['kernel_type'].unique()):
     hue='kernel_type',  # If multiple kernel types
     linewidth=2.0
 ) """
-plt.title('Difference in RMSE vs. Anisotropy\n(Spacing 20 Cross / Spacing 10 Plain)', fontsize=16, fontweight='bold')
+plt.title('RMSE ratio vs. Anisotropy\n(Spacing 20 Cross / Spacing 10 Plain)', fontsize=16, fontweight='bold')
 plt.xlabel('Anisotropy', fontsize=14)
 plt.ylabel('RMSE ratio', fontsize=14)
 #plt.axhline(0, color='black', linestyle='--', linewidth=1)
 plt.legend(title='Kernel type', fontsize=12, title_fontsize=13)
 plt.tight_layout()
-plt.savefig('figures/' + f'fig2_20C-10P.eps', format='eps', dpi=300)
+plt.savefig('figures/' + f'grid_plain_20C-10P.eps', format='eps', dpi=300)
 plt.show()
 
 # Case 2: Spacing 20 Plain vs. Spacing 40 Cross
@@ -328,14 +330,84 @@ for idx, kernel_type in enumerate(smoothed_grouped['kernel_type'].unique()):
         markersize=8
     )
 
-plt.title('RMSE ration vs. Anisotropy\n(Spacing 40 Cross / Spacing 20 Plain)', fontsize=16, fontweight='bold')
+plt.title('RMSE ratio vs. Anisotropy\n(Spacing 40 Cross / Spacing 20 Plain)', fontsize=16, fontweight='bold')
 plt.xlabel('Anisotropy', fontsize=14)
 plt.ylabel('RMSE ratio', fontsize=14)
 #plt.axhline(0, color='black', linestyle='--', linewidth=1)
 plt.legend(title='Kernel type', fontsize=12, title_fontsize=13)
 plt.tight_layout()
-plt.savefig('figures/' + f'fig2_40C-20P.eps', format='eps', dpi=300)
+plt.savefig('figures/' + f'grid_plain_40C-20P.eps', format='eps', dpi=300)
 plt.show()
+
+# %%
+# Angle delta
+plt.figure(figsize=(8, 6))
+ax = plt.gca()
+
+kernels = ['SE', 'SE-ARD']
+spaces = [10, 20, 40]
+
+# Initialize the palette
+palette = sns.color_palette("Set2", n_colors=len(spaces))
+
+# Compute mean and standard deviation
+filter1 = {
+    'grid_type': 'plain'
+}
+
+df_filter1 = analysis_utils.filter_df(df_interesting, filter1)
+grouped = df_filter1.groupby(['angle_delta', 'kernel_type', 'spacing']).agg({'RMSE': ['mean']}).reset_index()
+grouped.columns = ['angle_delta', 'kernel_type', 'spacing', 'RMSE_mean']
+
+# Sort the data
+grouped = grouped.sort_values(by=['spacing', 'kernel_type', 'angle_delta'])
+
+for i, kernel in enumerate(kernels):
+    for j, space in enumerate(spaces):
+        filters = {
+            'spacing': space,
+            'kernel_type': kernel
+        }
+
+        # Filter the DataFrame
+        df_filtered = analysis_utils.filter_df(grouped, filters)
+        # Ensure data is sorted by 'anisotropy'
+        df_filtered = df_filtered.sort_values('angle_delta')
+
+        ax.plot(
+            df_filtered['angle_delta'],
+            df_filtered['RMSE_mean'],
+            color=palette[j],
+            linewidth=2.0,
+            linestyle=('--', '-')[kernel == 'SE'],
+            markersize=8
+        )
+
+# Create custom legend handles for spacings (colors)
+spacing_handles = [Line2D([0], [0], color=palette[j], lw=2) for j in range(len(spaces))]
+spacing_labels = [f'{space}' for space in spaces]
+
+# Create custom legend handles for kernels (line styles)
+kernel_linestyles = ['-', '--']
+kernel_handles = [Line2D([0], [0], color='black', lw=2, linestyle=style) for style in kernel_linestyles]
+kernel_labels = ['SE', 'SE-ARD']
+
+# Add the legends to the plot
+legend1 = ax.legend(handles=spacing_handles, labels=spacing_labels, title='Spacing', fontsize=12, title_fontsize=13)
+ax.add_artist(legend1)  # Add the first legend manually
+#legend2 = ax.legend(handles=kernel_handles, labels=kernel_labels, title='Kernel Type', loc='upper left', fontsize=12, title_fontsize=13)
+#r'$\alpha$=' + f"{advection_angles[i]}
+
+plt.title('RMSE vs. ' + r'$\delta$' + ' between anisotropy and pattern lines', fontsize=16, fontweight='bold')
+plt.xlabel(r'$\delta$' + r' [$\circ$]', fontsize=14)
+plt.ylabel('RMSE', fontsize=14)
+#plt.axhline(0, color='black', linestyle='--', linewidth=1)
+#plt.legend(title='Spacing, Kernel type', fontsize=12, title_fontsize=13)
+plt.tight_layout()
+plt.savefig('figures/' + f'RMSE_angle_delta.eps', format='eps', dpi=300)
+plt.show()
+
+
 
 # %%
 # Investigate effect of angle_delta
@@ -436,7 +508,8 @@ df.dropna(subset=['anisotropy', 'angle_delta', 'kernel_type', 'grid_type', 'RMSE
 # Exploratory analysis using 80-90 degrees angle_delta
 filters = {
     'grid_type': 'plain',
-    'angle_delta': [0, 90]
+    'angle_delta': [80, 90],
+    'spacing': {10, 20, 40}
 }
 
 # Filter the DataFrame
@@ -469,14 +542,17 @@ plt.show()
 
 # %%
 # netCDF analysis - Load pickles from a directory
-directory_path = '/Users/ikw/code/out_files/netCDF_run1'
+directory_path = '/Users/ikw/code/out_files/netCDF_run2'
 data_list = pickle_reader.collect_data_from_directory(directory_path, '.pickle')
 environments = pickle_reader.collect_data_from_directory(directory_path + '/figures/environments', '.pickle')
+advection_angles = [5, -70, -50, -20]
 
 # %%
 df_original = pd.DataFrame(data_list)
 # Set up df angle_delta
-df_original['angle_delta'] = 90 - df_original['rot']
+
+df_original['advection_angle'] = [advection_angles[int(a)] for a in df_original['env_num'].values]
+df_original['angle_delta'] = df_original['rot'] + 90 - df_original['advection_angle']
 
 # Compute ts, depth
 df_original['file'] = [file.split('/')[-1].split(' ')[0] for file in df_original['env_desc']]
@@ -485,12 +561,12 @@ df_original['depth'] = [int(file.split(' ')[-1]) for file in df_original['env_de
 
 # Create df_numerical and df_interesting
 df_numerical = df_original.drop(['index', 'env_desc', 'env_num', 'spacing_num', 'rot_num', 'ct_train', 'ct_predict', 'kernel_type', 'grid_type'], axis=1)
-df_interesting = df_original.drop(['index', 'env_desc', 'env_num', 'rot_num', 'ct_train', 'ct_predict', 'rot', 'spacing_num', 'y_offset', 'file'], axis=1)
+df_interesting = df_original.drop(['index', 'env_desc', 'env_num', 'rot_num', 'ct_train', 'ct_predict', 'rot', 'spacing_num', 'x_offset', 'y_offset', 'file'], axis=1)
 print(df_interesting)
 
 # %%
 # Assuming 'environments' is your list of figures
-advection_angles = [5, -75, -50, -20]
+
 tss = df_original['ts'].unique()
 titles = []
 for i, angle in enumerate(advection_angles):
@@ -568,12 +644,12 @@ plt.show()
 # Define the constant values for other variables
 
 # Define spacings and kernel_types
-spacings = [10, 20, 30, 40]
+spacings = [10, 20, 40]
 kernel_types = ['SE', 'SE-ARD']
 
 # Filter values (include both kernel_types by not specifying 'kernel_type' in the filter)
 filter_values = {
-    'angle_delta': [0, 90],
+    'angle_delta': [-180, 180],
     'grid_type': 'plain'
 }
 

@@ -25,7 +25,7 @@ parser.add_argument("--directory", type=str, help="Path to output file directory
 #index = args.index
 index = 84
 #directory = args.directory
-directory = '../out_files/run2_test'
+directory = '../out_files/netCDF_run2'
 
 torch.set_default_dtype(torch.float64)
 
@@ -49,15 +49,15 @@ importlib.reload(gpt_class_environment)
 
 # %%
 # Setup experiment parameters
-environment_type = 'elliptical'
+environment_type = 'netCDF'
 
 # 'netCDF' parameters
 sample_variable = 'pH'
 #experiment_time_offset = 5 # *10 minutes intervals
 synoptic_sampling = True
-times = [89]#[4, 81, 85, 89]
-depths = [68]#[67, 66, 66, 68]
-advection_angles = [-20]#[5, -75, -50, -20] # Inspect files
+times = [4, 81, 85, 89]
+depths = [67, 66, 66, 68]
+advection_angles = [5, -70, -50, -20] # Inspect files
 background_threshold = 0.1
 # 'EnvClass' parameters
 d = 0.01 
@@ -66,7 +66,7 @@ experiment_start_time = np.datetime64('1970-01-01T13:00:00.000000000')
 # common parameters
 sample_radius = 1.0
 grid_spacings = [10, 20, 40]
-rot_dirs = range(0, 91, 5)
+rot_dirs = range(-90, 91, 5)
 grid_types = ['plain', 'cross']
 kernel_types = ['SE', 'SE-ARD']
 kernel_training_iter = 100
@@ -133,7 +133,7 @@ if environment_type == 'netCDF':
         
         # plot netCDF data set
         fig, ax = plt.subplots(figsize=(8, 6))
-        scatter = ax.scatter(x, y, c=env_list[i], cmap='coolwarm', s=2)
+        scatter = ax.scatter(x, y, c=env_list[i], cmap='coolwarm_r', s=2)
         cbar = fig.colorbar(scatter, ax=ax)
         cbar.set_label('Value')
 
@@ -158,8 +158,8 @@ elif environment_type == 'elliptical':
 
     # Define c parameter (determines anisotropy)
     rng_c = np.random.default_rng(seed=index)
-    env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
-    #env_list = [1.0, 180.0]
+    #env_list = rng_c.integers(low=1, high=2000, endpoint=True, size=num_c)/10.0  # Generate envs based on these
+    env_list = [1.0]
     env_desc = [str(c) for c in env_list]
 
     depths = np.ones_like(env_list)
@@ -290,12 +290,12 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         
                         if kernel_type == 'SE-ARD':
                             # Rotate system for ard kernel
-                            xy_to_rot_ard = xy_rot - torch.tensor([x_mean, y_mean])
-                            xy_to_train = path_utils.rotate_points(xy_to_rot_ard, advection_angle) + torch.tensor([x_mean, y_mean])
+                            xy_to_rot_ard = xy_rot - torch.tensor([x_mean_env, y_mean_env])
+                            xy_to_train = path_utils.rotate_points(xy_to_rot_ard, -advection_angle) + torch.tensor([x_mean_env, y_mean_env])
                             x_mean_env = scenario_x_min + (scenario_x_max - scenario_x_min)/2.0
                             y_mean_env = scenario_y_min + (scenario_y_max - scenario_y_min)/2.0
                             env_xy_to_rot_ard = env_xy - torch.tensor([x_mean_env, y_mean_env])
-                            xy_to_predict = path_utils.rotate_points(env_xy_to_rot_ard, advection_angle) + torch.tensor([x_mean_env, y_mean_env])
+                            xy_to_predict = path_utils.rotate_points(env_xy_to_rot_ard, -advection_angle) + torch.tensor([x_mean_env, y_mean_env])
                             kernel_name = 'scale_rbf_ard'
                         else:
                             xy_to_train = xy_rot
@@ -322,8 +322,10 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         
                         
                         # Compare single_pred with env_values
-                        xy_to_predict_to_rot = xy_to_predict - torch.tensor([x_mean, y_mean])
-                        xy_to_predict_rotated = path_utils.rotate_points(xy_to_predict_to_rot, -rot_dir) + torch.tensor([x_mean, y_mean])
+                        #xy_to_predict_to_rot = xy_to_predict - torch.tensor([x_mean_env, y_mean_env])
+                        env_xy_to_rot = env_xy - torch.tensor([x_mean_env, y_mean_env])
+                        #xy_to_predict_rotated = path_utils.rotate_points(xy_to_predict_to_rot, -rot_dir+advection_angle) + torch.tensor([x_mean_env, y_mean_env])
+                        xy_to_predict_rotated = path_utils.rotate_points(env_xy_to_rot, -rot_dir) + torch.tensor([x_mean_env, y_mean_env])
                         indices_low_x = xy_to_predict_rotated[:, 0] >= wp_x_min
                         indices_high_x = xy_to_predict_rotated[:, 0] <= wp_x_max
                         indices_low_y = xy_to_predict_rotated[:, 1] >= wp_y_min
@@ -332,6 +334,8 @@ with open(file_path, 'wb') as file_out, open(file_path_env, 'wb') as file_out_en
                         
                         values_diff = env_values[ind] - pred.mean[ind]
                         RMSE = values_diff.pow(2).mean().sqrt()
+                        #print(f'kernel {kernel_name}, RMSE: {RMSE}')
+                        #mdl.print_named_parameters()
                         
                         # Number of samples above threshold
                         num_above_threshold = (sample_values >= background_threshold).int().sum()
