@@ -618,7 +618,7 @@ if __name__ == '__main__':
     # plot_waypoints_and_data(way_points, x_coords, y_coords, title='AUV Lawnmower Path (Clover Pattern)')
 
     # Simulate AUV path and collect data
-    measurements, sample_coords = path(chemical_dataset, bubble_dataset, start_time, speed, way_points, sample_frequency, threshold, bowtie, data_var, sphere_radius=sphere_radius)
+    measurements, sample_coords = path_with_samples(chemical_dataset, bubble_dataset, start_time, speed, way_points, sample_frequency, threshold, bowtie, data_var, sphere_radius=sphere_radius)
 
     # Plot the results
     plot(chemical_dataset, bubble_dataset, x_coords, y_coords, z_coords, sample_coords, data_var, title='AUV Lawnmower Path (Clover Pattern)', save_as_gif=False, gif_filename='auv_path_LM_clover.gif')
