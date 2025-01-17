@@ -14,6 +14,9 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.995, m
         total_reward = 0
         for step in range(max_steps):
             action = agent.select_action(state, epsilon)
+            # Perhaps env.step should return nothing, just store new samples, and
+            # then an agent method should predict and compute rewards?
+            # The agents must have separate memories.
             next_state, reward, done, _ = env.step(action)
             agent.store_transition(state, action, reward, next_state, done)
             state = next_state
@@ -26,11 +29,6 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.995, m
 
         print(f"Episode {episode + 1}/{episodes}, Total Reward: {total_reward}, Epsilon: {epsilon:.3f}")
 
-# Usage Example:
-# import gym
-# env = EnvironmentWrapper(gym.make('CartPole-v1'))
-# agent = Agent(env.observation_space, env.action_space)
-# train_agent(env, agent)
 
 # %%
 # Doing stuff
@@ -44,5 +42,5 @@ env.load_dataset(data_file)
 env.set_env(parameter=param, depth=depth, time=time)
 fig = env.plot_env()
 
-#agent = rl_classes.Agent(env.observation_space, env.action_space)
+agent = rl_classes.Agent(env.observation_space, env.action_space)
 #train_agent(env, agent)

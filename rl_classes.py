@@ -6,9 +6,12 @@ import numpy as np
 import random
 from collections import deque
 import matplotlib.pyplot as plt
+import gpytorch
 
 import chem_utils
 import path
+from gpt_class_exactgpmodel import ExactGPModel
+
 
 # Step 1: Define the environment wrapper
 class EnvironmentWrapper:
@@ -22,6 +25,12 @@ class EnvironmentWrapper:
         self.val = None
         self.x = None
         self.y = None
+        self.llh = gpytorch.likelihoods.GaussianLikelihood()
+        self.length_constraint = gpytorch.constraints.Positive()
+        self.mdl = None
+        self.kernel_name = 'scale_rbf'
+        self.sampled_coords = []
+        self.sampled_vals = []
 
         # Read and clean list of .nc files
         files = os.listdir(data_dir)
@@ -60,6 +69,7 @@ class EnvironmentWrapper:
         y = val_dataset['y'].values[:72710]
         self.x = x - x.min()
         self.y = y - y.min()
+        self.env_xy = torch.tensor(np.column_stack((self.x, self.y)), dtype=torch.float64)
         self.print_info()
         
     def print_info(self):
@@ -103,13 +113,28 @@ class EnvironmentWrapper:
         # (although that is much slower)
         synoptic = True
 
-        sample_locs = path.path([old_loc, new_loc], start_time, speed, sampling_freq, synoptic)
-        chem_utils.extract_synoptic_chemical_data_from_depth()
-        return self.env.step(action)
+        sample_coords = path.path([old_loc, new_loc], start_time, speed, sampling_freq, synoptic)
+        sample_coords_xy = [(item[0], item[1]) for item in sample_coords]
 
-    def render(self):
+        radius = 1.0 # Radius of sample averaging
+        measurements = chem_utils.extract_synoptic_chemical_data_from_depth(self.x, self.y, self.val, sample_coords_xy, radius)
+        self.sampled_coords.append(sample_coords_xy)
+        self.sampled_vals.append(measurements)
+
+        if self.mdl is None:
+            self.mdl = ExactGPModel(torch.tensor(self.sampled_coords), torch.tensor(self.sampled_vals), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
         
-        self.env.render()
+        self.mdl.set_train_data(torch.tensor(self.sampled_coords), torch.tensor(self.sampled_vals))
+        
+        # Then predict
+        self.mdl.eval()
+        self.mdl.likelihood.eval()
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            self.current_pred = self.mdl.likelihood(self.mdl(self.env_xy))
+
+        # next_state, reward, done, _ 
+        return sample_coords_xy, measurements
 
     def close(self):
         self.env.close()
