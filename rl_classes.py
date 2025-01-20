@@ -25,10 +25,6 @@ class EnvironmentWrapper:
         self.val = None
         self.x = None
         self.y = None
-        self.llh = gpytorch.likelihoods.GaussianLikelihood()
-        self.length_constraint = gpytorch.constraints.Positive()
-        self.mdl = None
-        self.kernel_name = 'scale_rbf'
         self.sampled_coords = []
         self.sampled_vals = []
 
@@ -121,20 +117,8 @@ class EnvironmentWrapper:
         self.sampled_coords.append(sample_coords_xy)
         self.sampled_vals.append(measurements)
 
-        if self.mdl is None:
-            self.mdl = ExactGPModel(torch.tensor(self.sampled_coords), torch.tensor(self.sampled_vals), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
-        
-        self.mdl.set_train_data(torch.tensor(self.sampled_coords), torch.tensor(self.sampled_vals))
-        
-        # Then predict
-        self.mdl.eval()
-        self.mdl.likelihood.eval()
-
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            self.current_pred = self.mdl.likelihood(self.mdl(self.env_xy))
-
         # next_state, reward, done, _ 
-        return sample_coords_xy, measurements
+        return len(measurements)
 
     def close(self):
         self.env.close()
@@ -161,13 +145,19 @@ class PolicyNetwork(nn.Module):
         return self.fc3(x)
 
 # Step 3: Define the Agent
-class Agent:
-    def __init__(self, input_dim, action_space, learning_rate=1e-3, gamma=0.99):
+class GPAgent:
+    def __init__(self, input_dim, action_space, env_xy, learning_rate=1e-3, gamma=0.99):
         self.gamma = gamma
         self.policy_net = PolicyNetwork(input_dim, action_space)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)
         self.memory = deque(maxlen=10000)
         self.batch_size = 64
+        self.llh = gpytorch.likelihoods.GaussianLikelihood()
+        self.length_constraint = gpytorch.constraints.Positive()
+        self.mdl = None
+        self.kernel_name = 'scale_rbf'
+        self.env_xy = env_xy
+        self.current_pred = None
 
     def select_action(self, state, epsilon=0.1):
         if random.random() < epsilon:
@@ -177,6 +167,22 @@ class Agent:
                 state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
                 return torch.argmax(self.policy_net(state)).item()
 
+    def estimate_env(self, sampled_coords, sampled_vals):
+        if self.mdl is None:
+            self.mdl = ExactGPModel(torch.tensor(sampled_coords), torch.tensor(sampled_vals), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
+        
+        self.mdl.set_train_data(torch.tensor(sampled_coords), torch.tensor(sampled_vals))
+        
+        # Then predict
+        self.mdl.eval()
+        self.mdl.likelihood.eval()
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            self.current_pred = self.mdl.likelihood(self.mdl(self.env_xy))
+    
+
+        
+    
     def store_transition(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 

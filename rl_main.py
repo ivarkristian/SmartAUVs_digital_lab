@@ -10,13 +10,18 @@ importlib.reload(rl_classes)
 def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.995, min_epsilon=0.1):
     epsilon = 1.0
     for episode in range(episodes):
-        state = env.reset()
+        env.reset() # delete sample memory
+        agent.reset() # 5*5 of random numbers
         total_reward = 0
         for step in range(max_steps):
             action = agent.select_action(state, epsilon)
             # Perhaps env.step should return nothing, just store new samples, and
             # then an agent method should predict and compute rewards?
             # The agents must have separate memories.
+            n_new_samples = env.step(action)
+            if n_new_samples:
+                agent.estimate_env(env.sampled_coords, env.sampled_vals)
+                reward = agent.compute_reward()
             next_state, reward, done, _ = env.step(action)
             agent.store_transition(state, action, reward, next_state, done)
             state = next_state
@@ -42,5 +47,5 @@ env.load_dataset(data_file)
 env.set_env(parameter=param, depth=depth, time=time)
 fig = env.plot_env()
 
-agent = rl_classes.Agent(env.observation_space, env.action_space)
+agent = rl_classes.Agent(env.observation_space, env.action_space, env.env_xy)
 #train_agent(env, agent)
