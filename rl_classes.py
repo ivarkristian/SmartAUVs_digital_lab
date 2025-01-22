@@ -12,6 +12,14 @@ import chem_utils
 import path
 from gpt_class_exactgpmodel import ExactGPModel
 
+# %%
+# Disable LaTeX rendering to avoid the need for an external LaTeX installation
+# Use MathText for LaTeX-like font rendering
+plt.rcParams.update({
+    "text.usetex": False,  # Disable external LaTeX usage
+    "font.family": "Dejavu Serif",  # Use a serif font that resembles LaTeX's default
+    "mathtext.fontset": "dejavuserif"  # Use DejaVu Serif font for mathtext, similar to LaTeX fonts
+})
 
 # Step 1: Define the environment wrapper
 class EnvironmentWrapper:
@@ -92,19 +100,16 @@ class EnvironmentWrapper:
 
 
     def reset(self):
-        
-        return self.env.reset()
+        self.sampled_coords = []
+        self.sampled_vals = []
+        return
 
-    def step(self, action):
+    def step(self, old_loc, new_loc, speed, sampling_freq):
         # Move to new location while sampling
         # Action should specify old and new location and speed so that sampling points
         # and reward can be computed
         start_time = '2020-01-01T02:10:00.000000000' # dummy time
 
-        old_loc = action[0]
-        new_loc = action[1]
-        speed = action[2]
-        sampling_freq = action[3]
         # Perhaps make a more flexible function for non-synoptic sampling
         # (although that is much slower)
         synoptic = True
@@ -146,7 +151,7 @@ class PolicyNetwork(nn.Module):
 
 # Step 3: Define the Agent
 class GPAgent:
-    def __init__(self, input_dim, action_space, env_xy, learning_rate=1e-3, gamma=0.99):
+    def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99):
         self.gamma = gamma
         self.policy_net = PolicyNetwork(input_dim, action_space)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)
@@ -158,16 +163,46 @@ class GPAgent:
         self.kernel_name = 'scale_rbf'
         self.env_xy = env_xy
         self.current_pred = None
+        self.small_pred_mean = torch.zeros(len(env_xy))
+        self.small_pred_std_dev = torch.zeros(len(env_xy))
+        self.small_grid_location = torch.tensor((0, 0))
+        self.location = torch.tensor((0, 0))
+        self.speed = speed
+        self.sampling_freq = sampling_freq
+        self.small_grid_bins = small_grid_bins
 
+    def reset(self):
+        self.mdl = None
+        self.current_pred = None
+        self.small_pred_mean = torch.zeros(len(self.env_xy))
+        self.small_pred_std_dev = torch.zeros(len(self.env_xy))
+        self.small_grid_location = torch.tensor((0, 0))
+        self.location = torch.tensor((0, 0))
+        return
+    
     def select_action(self, state, epsilon=0.1):
         if random.random() < epsilon:
             return random.randint(0, self.policy_net.fc3.out_features - 1)
         else:
             with torch.no_grad():
-                state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
-                return torch.argmax(self.policy_net(state)).item()
+                #state = torch.cat((self.small_pred_mean, self.location))
+                state = torch.cat((self.small_pred_std_dev, self.location))
 
-    def estimate_env(self, sampled_coords, sampled_vals):
+                return torch.argmax(self.policy_net(state)).item()
+    
+    def new_small_grid_location_from_action(self, action):
+        if action == 0:
+            movement = torch.tensor((0, 1))# up
+        elif action == 1:
+            movement = torch.tensor((0, -1))# down
+        elif action == 2:
+            movement = torch.tensor((-1, 0))# left
+        elif action == 3:
+            movement = torch.tensor((0, 1))# right
+        
+        return self.small_grid_location + movement
+
+    def estimate_env(self, env_xy, sampled_coords, sampled_vals):
         if self.mdl is None:
             self.mdl = ExactGPModel(torch.tensor(sampled_coords), torch.tensor(sampled_vals), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
         
@@ -178,11 +213,55 @@ class GPAgent:
         self.mdl.likelihood.eval()
 
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            self.current_pred = self.mdl.likelihood(self.mdl(self.env_xy))
+            current_pred = self.mdl.likelihood(self.mdl(env_xy))
     
-
+        return current_pred
+    
+    def compute_reward(self, current_prediction, next_prediction):
+        reward = (current_prediction - next_prediction).abs().sum()
         
-    
+        return reward
+
+    def make_small_grid(self, coords, pred):
+        # Compute small_grid from predictions
+        # coords is a 1D torch tensor of (coord_x, coord_y) in the grid
+        # pred is a 1D torch tensor of values belonging to the coordinates
+
+        max_x = coords[:, 0].max()
+        max_y = coords[:, 1].max()
+        bin_width_x = max_x/self.small_grid_bins
+        bin_width_y = max_y/self.small_grid_bins
+        bin_borders_x = torch.arange(0, max_x + bin_width_x, bin_width_x)
+        bin_borders_y = torch.arange(0, max_y + bin_width_y, bin_width_y)
+        
+        # Initialize the small grid with zeros
+        small_pred = torch.zeros((self.small_grid_bins**2), dtype=torch.float32)
+
+        # Fill the small_grid with mean values for each bin,
+        # by applying the bin_borders_x and bin_borders_y
+        c = 0
+        for i in range(self.small_grid_bins):
+            for j in range(self.small_grid_bins):
+                # Find the bounds for the current bin
+                x_min, x_max = bin_borders_x[i], bin_borders_x[i + 1]
+                y_min, y_max = bin_borders_y[j], bin_borders_y[j + 1]
+
+                # Identify points within the current bin
+                in_bin = (
+                    (coords[:, 0] >= x_min) & (coords[:, 0] < x_max) &
+                    (coords[:, 1] >= y_min) & (coords[:, 1] < y_max)
+                )
+
+                # Compute the mean value of current_pred within the bin
+                if in_bin.any():
+                    small_pred[c] = pred[in_bin].mean()
+                else:
+                    small_pred[c] = 0.0  # Default to 0 if no points fall in the bin
+                
+                c = c + 1
+
+        return small_pred
+
     def store_transition(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 
