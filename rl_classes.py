@@ -33,8 +33,8 @@ class EnvironmentWrapper:
         self.val = None
         self.x = None
         self.y = None
-        self.sampled_coords = []
-        self.sampled_vals = []
+        self.sampled_coords = torch.tensor([])
+        self.sampled_vals = torch.tensor([])
 
         # Read and clean list of .nc files
         files = os.listdir(data_dir)
@@ -73,7 +73,7 @@ class EnvironmentWrapper:
         y = val_dataset['y'].values[:72710]
         self.x = x - x.min()
         self.y = y - y.min()
-        self.env_xy = torch.tensor(np.column_stack((self.x, self.y)), dtype=torch.float64)
+        self.env_xy = torch.tensor(np.column_stack((self.x, self.y)), dtype=torch.float32)
         self.print_info()
         
     def print_info(self):
@@ -100,8 +100,8 @@ class EnvironmentWrapper:
 
 
     def reset(self):
-        self.sampled_coords = []
-        self.sampled_vals = []
+        self.sampled_coords = torch.tensor([])
+        self.sampled_vals = torch.tensor([])
         return
 
     def step(self, old_loc, new_loc, speed, sampling_freq):
@@ -113,14 +113,22 @@ class EnvironmentWrapper:
         # Perhaps make a more flexible function for non-synoptic sampling
         # (although that is much slower)
         synoptic = True
-
+        print(f'old_loc: {old_loc}, new_loc: {new_loc}')
         sample_coords = path.path([old_loc, new_loc], start_time, speed, sampling_freq, synoptic)
-        sample_coords_xy = [(item[0], item[1]) for item in sample_coords]
+        print(f'sample_coords: {sample_coords}')
+        #sample_coords_xy = [(item[0], item[1]) for item in sample_coords]
+        #sample_coords_xy = torch.tensor(sample_coords_xy)
+        # Extract the first two elements of each tuple and convert to a torch tensor
+        sample_coords_xy = torch.tensor([(float(t[0]), float(t[1])) for t in sample_coords])
+        print(f'sample_coords_xy: {sample_coords_xy}')
 
+        measurements = torch.zeros(len(sample_coords_xy), dtype=torch.float32)
         radius = 1.0 # Radius of sample averaging
-        measurements = chem_utils.extract_synoptic_chemical_data_from_depth(self.x, self.y, self.val, sample_coords_xy, radius)
-        self.sampled_coords.append(sample_coords_xy)
-        self.sampled_vals.append(measurements)
+        for c, coord in enumerate(sample_coords_xy):
+            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.x, self.y, self.val, coord.numpy(), radius)
+        
+        self.sampled_coords = torch.cat((self.sampled_coords, sample_coords_xy))
+        self.sampled_vals = torch.cat((self.sampled_vals, measurements))
 
         # next_state, reward, done, _ 
         return len(measurements)
@@ -159,14 +167,14 @@ class GPAgent:
         self.batch_size = 64
         self.llh = gpytorch.likelihoods.GaussianLikelihood()
         self.length_constraint = gpytorch.constraints.Positive()
-        self.mdl = None
         self.kernel_name = 'scale_rbf'
+        self.mdl = ExactGPModel(torch.tensor([]), torch.tensor([]), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
         self.env_xy = env_xy
         self.current_pred = None
         self.small_pred_mean = torch.zeros(len(env_xy))
         self.small_pred_std_dev = torch.zeros(len(env_xy))
         self.small_grid_location = torch.tensor((0, 0))
-        self.location = torch.tensor((0, 0))
+        self.location = torch.tensor((0, 0, 0))
         self.speed = speed
         self.sampling_freq = sampling_freq
         self.small_grid_bins = small_grid_bins
@@ -192,21 +200,35 @@ class GPAgent:
     
     def new_small_grid_location_from_action(self, action):
         if action == 0:
-            movement = torch.tensor((0, 1))# up
+            movement = torch.tensor((1, 0))# right
         elif action == 1:
-            movement = torch.tensor((0, -1))# down
-        elif action == 2:
             movement = torch.tensor((-1, 0))# left
+        elif action == 2:
+            movement = torch.tensor((0, -1))# down
         elif action == 3:
-            movement = torch.tensor((0, 1))# right
+            movement = torch.tensor((0, 1))# up
         
         return self.small_grid_location + movement
 
+    def print_action(self, action):
+        if action == 0:
+            print('right')
+        elif action == 1:
+            print('left')
+        elif action == 2:
+            print('down')
+        elif action == 3:
+            print('up')
+        else:
+            print(f'Action {action} not recognized')
+    
+        
     def estimate_env(self, env_xy, sampled_coords, sampled_vals):
+        print(self.mdl)
         if self.mdl is None:
             self.mdl = ExactGPModel(torch.tensor(sampled_coords), torch.tensor(sampled_vals), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
         
-        self.mdl.set_train_data(torch.tensor(sampled_coords), torch.tensor(sampled_vals))
+        self.mdl.set_train_data(torch.tensor(sampled_coords), torch.tensor(sampled_vals), strict=False)
         
         # Then predict
         self.mdl.eval()
