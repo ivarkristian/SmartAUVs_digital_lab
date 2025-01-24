@@ -82,10 +82,13 @@ class EnvironmentWrapper:
         print(f'Loaded dataset: {self.dataset}')
         print(f'Loaded parameter: {self.parameter} (depth={self.depth}, time={self.time})')
 
-    def plot_env(self):
+    def plot_env(self, path=None):
         if self.parameter:
             fig, ax = plt.subplots(figsize=(8, 6))
-            scatter = ax.scatter(self.y, self.x, c=self.val, cmap='coolwarm', s=2, vmin=self.val.min(), vmax=self.val.max())
+            scatter = ax.scatter(self.x, self.y, c=self.val, cmap='coolwarm', s=2, vmin=self.val.min(), vmax=self.val.max())
+            if path:
+                ax.scatter(self.sampled_coords[:, 0], self.sampled_coords[:, 1], c='black', s=2)
+            
             cbar = fig.colorbar(scatter, ax=ax)
             cbar.set_label('Value')
 
@@ -113,14 +116,10 @@ class EnvironmentWrapper:
         # Perhaps make a more flexible function for non-synoptic sampling
         # (although that is much slower)
         synoptic = True
-        print(f'old_loc: {old_loc}, new_loc: {new_loc}')
+        #print(f'old_loc: {old_loc}, new_loc: {new_loc}')
         sample_coords = path.path([old_loc, new_loc], start_time, speed, sampling_freq, synoptic)
-        print(f'sample_coords: {sample_coords}')
-        #sample_coords_xy = [(item[0], item[1]) for item in sample_coords]
-        #sample_coords_xy = torch.tensor(sample_coords_xy)
         # Extract the first two elements of each tuple and convert to a torch tensor
         sample_coords_xy = torch.tensor([(float(t[0]), float(t[1])) for t in sample_coords])
-        print(f'sample_coords_xy: {sample_coords_xy}')
 
         measurements = torch.zeros(len(sample_coords_xy), dtype=torch.float32)
         radius = 1.0 # Radius of sample averaging
@@ -160,6 +159,7 @@ class PolicyNetwork(nn.Module):
 # Step 3: Define the Agent
 class GPAgent:
     def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99):
+        # Init the static parameters
         self.gamma = gamma
         self.policy_net = PolicyNetwork(input_dim, action_space)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)
@@ -168,24 +168,21 @@ class GPAgent:
         self.llh = gpytorch.likelihoods.GaussianLikelihood()
         self.length_constraint = gpytorch.constraints.Positive()
         self.kernel_name = 'scale_rbf'
-        self.mdl = ExactGPModel(torch.tensor([]), torch.tensor([]), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
         self.env_xy = env_xy
-        self.current_pred = None
-        self.small_pred_mean = torch.zeros(len(env_xy))
-        self.small_pred_std_dev = torch.zeros(len(env_xy))
-        self.small_grid_location = torch.tensor((0, 0))
-        self.location = torch.tensor((0, 0, 0))
+        self.small_grid_bins = small_grid_bins
         self.speed = speed
         self.sampling_freq = sampling_freq
-        self.small_grid_bins = small_grid_bins
+        # Init the parameters that resets for every episode
+        self.reset()
 
     def reset(self):
-        self.mdl = None
-        self.current_pred = None
-        self.small_pred_mean = torch.zeros(len(self.env_xy))
-        self.small_pred_std_dev = torch.zeros(len(self.env_xy))
+        self.mdl = ExactGPModel(torch.tensor([]), torch.tensor([]), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
+        self.current_pred_mean = torch.zeros(len(self.env_xy))
+        self.current_pred_variance = torch.ones(len(self.env_xy))*5
+        self.small_grid_mean = torch.zeros(self.small_grid_bins**2)
+        self.small_grid_variance = torch.zeros(self.small_grid_bins**2)
         self.small_grid_location = torch.tensor((0, 0))
-        self.location = torch.tensor((0, 0))
+        self.location = torch.tensor((0, 0, 0))
         return
     
     def select_action(self, state, epsilon=0.1):
@@ -193,8 +190,8 @@ class GPAgent:
             return random.randint(0, self.policy_net.fc3.out_features - 1)
         else:
             with torch.no_grad():
-                #state = torch.cat((self.small_pred_mean, self.location))
-                state = torch.cat((self.small_pred_std_dev, self.location))
+                #state = torch.cat((self.small_grid_mean, self.small_grid_location))
+                state = torch.cat((self.small_grid_variance, self.small_grid_location))
 
                 return torch.argmax(self.policy_net(state)).item()
     
@@ -224,11 +221,10 @@ class GPAgent:
     
         
     def estimate_env(self, env_xy, sampled_coords, sampled_vals):
-        print(self.mdl)
         if self.mdl is None:
-            self.mdl = ExactGPModel(torch.tensor(sampled_coords), torch.tensor(sampled_vals), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
+            self.mdl = ExactGPModel(sampled_coords, sampled_vals, self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
         
-        self.mdl.set_train_data(torch.tensor(sampled_coords), torch.tensor(sampled_vals), strict=False)
+        self.mdl.set_train_data(sampled_coords, sampled_vals, strict=False)
         
         # Then predict
         self.mdl.eval()
@@ -291,25 +287,28 @@ class GPAgent:
         batch = random.sample(self.memory, self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
         return (
-            torch.tensor(states, dtype=torch.float32),
+            #torch.tensor(states, dtype=torch.float32),
+            torch.stack([state for state in states]),
             torch.tensor(actions, dtype=torch.long),
             torch.tensor(rewards, dtype=torch.float32),
-            torch.tensor(next_states, dtype=torch.float32),
+            #torch.tensor(next_states, dtype=torch.float32),
+            torch.stack([next_state for next_state in next_states]),
             torch.tensor(dones, dtype=torch.float32),
         )
 
-    def train(self):
-        if len(self.memory) < self.batch_size:
-            return
+    def train(self, training_per_episode=1):
+        for _ in range(training_per_episode):
+            if len(self.memory) < self.batch_size:
+                return
 
-        states, actions, rewards, next_states, dones = self.sample_memory()
+            states, actions, rewards, next_states, dones = self.sample_memory()
 
-        current_q = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze()
-        next_q = self.policy_net(next_states).max(1)[0]
-        target_q = rewards + self.gamma * next_q * (1 - dones)
+            current_q = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze()
+            next_q = self.policy_net(next_states).max(1)[0]
+            target_q = rewards + self.gamma * next_q * (1 - dones)
 
-        loss = nn.MSELoss()(current_q, target_q)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+            loss = nn.MSELoss()(current_q, target_q)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
