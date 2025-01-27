@@ -25,10 +25,12 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
         illegal_action_n = 0
         state = torch.cat((torch.zeros(agent.small_grid_bins**2), torch.tensor((0, 0))))
         for step in range(max_steps):
-            #print(f'Small grid loc: {agent.small_grid_location}')
+            agent.print_grid(agent.small_grid_variance)
+            print(f'Loc: {agent.small_grid_location}', end=' ')
             action = agent.select_action(state, epsilon)
-            #print(f'Action: ', end='')
-            #agent.print_action(action)
+            print(f'Action: ', end='')
+            agent.print_action(action)
+            print('')
 
             new_small_grid_loc = agent.new_small_grid_location_from_action(action)
             if new_small_grid_loc.max() >= agent_small_grid_bins or new_small_grid_loc.min() < 0:
@@ -53,8 +55,8 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
                 next_prediction_mean = next_prediction.mean
                 next_prediction_variance = next_prediction.variance
                 # Update small_grids
-                agent.small_grid_mean = agent.make_small_grid(env.env_xy, next_prediction.mean)
-                agent.small_grid_variance = agent.make_small_grid(env.env_xy, next_prediction.variance)
+                agent.small_grid_mean = agent.normalize(agent.make_small_grid(env.env_xy, next_prediction.mean))
+                agent.small_grid_variance = agent.normalize(agent.make_small_grid(env.env_xy, next_prediction.variance))
 
             else:
                 next_prediction_mean = agent.current_pred_mean
@@ -118,6 +120,6 @@ state_n = agent_small_grid_bins**2 + 2
 action_n = 4
 agent = rl_classes.GPAgent(state_n, action_n, env.env_xy, agent_speed, sampling_freq, agent_small_grid_bins)
 
-train_agent(env, agent, episodes=70, max_steps=100, epsilon_decay=0.95)
+train_agent(env, agent, episodes=3, max_steps=10, epsilon_decay=0.95)
 
 # %%

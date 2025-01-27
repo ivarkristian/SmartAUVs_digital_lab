@@ -219,6 +219,23 @@ class GPAgent:
         else:
             print(f'Action {action} not recognized')
     
+    def print_grid(self, grid):
+        # Ensure vector length is a perfect square
+        n = grid.numel()  # Get the total number of elements in the tensor
+        sqrt_n = int(torch.sqrt(torch.tensor(n, dtype=torch.float32)))
+        if sqrt_n ** 2 != n:
+            raise ValueError("The length of the vector must be a perfect square.")
+
+        # Reshape into a 2D grid
+        grid = grid.view(sqrt_n, sqrt_n)
+
+        # Reverse the rows to make the first sqrt(n) values the bottom row
+        grid = torch.flip(grid, dims=[0])
+
+        # Print the grid
+        for row in grid:
+            print(" ".join(f"{v:.{4}f}" for v in row.tolist()))
+
         
     def estimate_env(self, env_xy, sampled_coords, sampled_vals):
         if self.mdl is None:
@@ -236,7 +253,8 @@ class GPAgent:
         return current_pred
     
     def compute_reward(self, current_prediction, next_prediction):
-        reward = (current_prediction - next_prediction).abs().sum()
+        total_change = (current_prediction - next_prediction).abs().sum()
+        reward = self.normalize(total_change/len(current_prediction))
         
         return reward
 
@@ -279,6 +297,9 @@ class GPAgent:
                 c = c + 1
 
         return small_pred
+    
+    def normalize(self, tensor):
+        return (tensor-tensor.min())/tensor.max()
 
     def store_transition(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
