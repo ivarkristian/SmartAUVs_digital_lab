@@ -82,7 +82,7 @@ class EnvironmentWrapper:
         print(f'Loaded dataset: {self.dataset}')
         print(f'Loaded parameter: {self.parameter} (depth={self.depth}, time={self.time})')
 
-    def plot_env(self, path=None):
+    def plot_env(self, title_postfix=None, path=None):
         if self.parameter:
             fig, ax = plt.subplots(figsize=(8, 6))
             scatter = ax.scatter(self.x, self.y, c=self.val, cmap='coolwarm', s=2, vmin=self.val.min(), vmax=self.val.max())
@@ -95,7 +95,7 @@ class EnvironmentWrapper:
             # Add labels and title
             ax.set_xlabel('Easting [m]')
             ax.set_ylabel('Northing [m]')
-            ax.set_title(f'Time {self.time}, {self.parameter} at {self.depth}m depth')
+            ax.set_title(f'Time {self.time}, {self.parameter} at {self.depth}m depth ({title_postfix})')
 
             return fig, ax
         
@@ -106,6 +106,12 @@ class EnvironmentWrapper:
         self.sampled_coords = torch.tensor([])
         self.sampled_vals = torch.tensor([])
         return
+    
+    def append_z_to_xy(self, xy):
+        if len(xy) == 2:
+            return torch.cat((xy, torch.tensor([self.depth])))
+        else:
+            return xy
 
     def step(self, old_loc, new_loc, speed, sampling_freq):
         # Move to new location while sampling
@@ -116,6 +122,8 @@ class EnvironmentWrapper:
         # Perhaps make a more flexible function for non-synoptic sampling
         # (although that is much slower)
         synoptic = True
+        old_loc = self.append_z_to_xy(old_loc)
+        new_loc = self.append_z_to_xy(new_loc)
         #print(f'old_loc: {old_loc}, new_loc: {new_loc}')
         sample_coords = path.path([old_loc, new_loc], start_time, speed, sampling_freq, synoptic)
         # Extract the first two elements of each tuple and convert to a torch tensor
@@ -158,12 +166,19 @@ class PolicyNetwork(nn.Module):
 
 # Step 3: Define the Agent
 class GPAgent:
-    def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99):
+    def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99, nn_filename=None):
         # Init the static parameters
+        self.nn_filename = nn_filename
         self.gamma = gamma
+        self.learning_rate = learning_rate
+        self.epsilon = 1.0
         self.policy_net = PolicyNetwork(input_dim, action_space)
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)
-        self.memory = deque(maxlen=10000)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
+        
+        if self.nn_filename:
+            self.load_model(self.nn_filename)
+
+        self.memory = deque(maxlen=100000)
         self.batch_size = 64
         self.llh = gpytorch.likelihoods.GaussianLikelihood()
         self.length_constraint = gpytorch.constraints.Positive()
@@ -185,6 +200,35 @@ class GPAgent:
         self.location = torch.tensor((0, 0, 0))
         return
     
+    def save_model(self, filename=None):
+        """Save the model weights and optimizer state to a file."""
+        if filename is None:
+            filename = 'GPAgent.nn'
+        
+        torch.save({
+            'policy_state_dict': self.policy_net.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'learning_rate': self.learning_rate,
+            'gamma': self.gamma,
+            'epsilon': self.epsilon
+        }, filename)
+        print(f"Model saved to {filename}")
+
+    def load_model(self, filename=None):
+        """Load model weights and optimizer state from a file."""
+        try:
+            checkpoint = torch.load(filename, weights_only=True)
+            self.policy_net.load_state_dict(checkpoint['policy_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.learning_rate = checkpoint.get('learning_rate', self.learning_rate)
+            self.gamma = checkpoint.get('gamma', self.gamma)
+            self.epsilon = checkpoint.get('epsilon', self.epsilon)
+            print(f"Model loaded from {filename}")
+        except FileNotFoundError:
+            print(f"No saved model found at {filename}, starting fresh.")
+        except Exception as e:
+            print(f'Error loading model: {e}')
+
     def select_action(self, state, epsilon=0.1):
         if random.random() < epsilon:
             return random.randint(0, self.policy_net.fc3.out_features - 1)
@@ -254,7 +298,7 @@ class GPAgent:
     
     def compute_reward(self, current_prediction, next_prediction):
         total_change = (current_prediction - next_prediction).abs().sum()
-        reward = self.normalize(total_change/len(current_prediction))
+        reward = total_change
         
         return reward
 
@@ -279,8 +323,8 @@ class GPAgent:
         for i in range(self.small_grid_bins):
             for j in range(self.small_grid_bins):
                 # Find the bounds for the current bin
-                x_min, x_max = bin_borders_x[i], bin_borders_x[i + 1]
-                y_min, y_max = bin_borders_y[j], bin_borders_y[j + 1]
+                x_min, x_max = bin_borders_x[j], bin_borders_x[j + 1]
+                y_min, y_max = bin_borders_y[i], bin_borders_y[i + 1]
 
                 # Identify points within the current bin
                 in_bin = (
@@ -299,7 +343,11 @@ class GPAgent:
         return small_pred
     
     def normalize(self, tensor):
-        return (tensor-tensor.min())/tensor.max()
+        if tensor.min() == tensor.max():
+            return torch.zeros_like(tensor)
+        
+        zero_adj = tensor - tensor.min()
+        return zero_adj/zero_adj.max()
 
     def store_transition(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
