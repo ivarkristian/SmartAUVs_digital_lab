@@ -124,8 +124,10 @@ class EnvironmentWrapper:
         synoptic = True
         old_loc = self.append_z_to_xy(old_loc)
         new_loc = self.append_z_to_xy(new_loc)
+        old_loc_cpu = old_loc.cpu()
+        new_loc_cpu = new_loc.cpu()
         #print(f'old_loc: {old_loc}, new_loc: {new_loc}')
-        sample_coords = path.path([old_loc, new_loc], start_time, speed, sampling_freq, synoptic)
+        sample_coords = path.path([old_loc_cpu, new_loc_cpu], start_time, speed, sampling_freq, synoptic)
         # Extract the first two elements of each tuple and convert to a torch tensor
         sample_coords_xy = torch.tensor([(float(t[0]), float(t[1])) for t in sample_coords])
 
@@ -166,13 +168,14 @@ class PolicyNetwork(nn.Module):
 
 # Step 3: Define the Agent
 class GPAgent:
-    def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99, nn_filename=None):
+    def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99, nn_filename=None, device='mps'):
         # Init the static parameters
+        self.device = torch.device(device)
         self.nn_filename = nn_filename
         self.gamma = gamma
         self.learning_rate = learning_rate
         self.epsilon = 1.0
-        self.policy_net = PolicyNetwork(input_dim, action_space)
+        self.policy_net = PolicyNetwork(input_dim, action_space).to(self.device)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
         
         if self.nn_filename:
@@ -194,10 +197,11 @@ class GPAgent:
         self.mdl = ExactGPModel(torch.tensor([]), torch.tensor([]), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
         self.current_pred_mean = torch.zeros(len(self.env_xy))
         self.current_pred_variance = torch.ones(len(self.env_xy))*5
-        self.small_grid_mean = torch.zeros(self.small_grid_bins**2)
-        self.small_grid_variance = torch.zeros(self.small_grid_bins**2)
-        self.small_grid_location = torch.tensor((0, 0))
-        self.location = torch.tensor((0, 0, 0))
+        
+        self.small_grid_mean = torch.zeros(self.small_grid_bins**2, device=self.device)
+        self.small_grid_variance = torch.zeros(self.small_grid_bins**2, device=self.device)
+        self.small_grid_location = torch.tensor((0, 0), device=self.device)
+        self.location = torch.tensor((0, 0, 0), device=self.device)
         return
     
     def save_model(self, filename=None):
@@ -241,13 +245,13 @@ class GPAgent:
     
     def new_small_grid_location_from_action(self, action):
         if action == 0:
-            movement = torch.tensor((1, 0))# right
+            movement = torch.tensor((1, 0), device=self.device)# right
         elif action == 1:
-            movement = torch.tensor((-1, 0))# left
+            movement = torch.tensor((-1, 0), device=self.device)# left
         elif action == 2:
-            movement = torch.tensor((0, -1))# down
+            movement = torch.tensor((0, -1), device=self.device)# down
         elif action == 3:
-            movement = torch.tensor((0, 1))# up
+            movement = torch.tensor((0, 1), device=self.device)# up
         
         return self.small_grid_location + movement
 
@@ -302,20 +306,22 @@ class GPAgent:
         
         return reward
 
-    def make_small_grid(self, coords, pred):
+    def make_small_grid(self, coords_cpu, pred_cpu):
         # Compute small_grid from predictions
         # coords is a 1D torch tensor of (coord_x, coord_y) in the grid
         # pred is a 1D torch tensor of values belonging to the coordinates
+        coords = coords_cpu.to(self.device)
+        pred = pred_cpu.to(self.device)
 
         max_x = coords[:, 0].max()
         max_y = coords[:, 1].max()
         bin_width_x = max_x/self.small_grid_bins
         bin_width_y = max_y/self.small_grid_bins
-        bin_borders_x = torch.arange(0, max_x + bin_width_x, bin_width_x)
-        bin_borders_y = torch.arange(0, max_y + bin_width_y, bin_width_y)
+        bin_borders_x = torch.arange(0, max_x + bin_width_x, bin_width_x, device=self.device)
+        bin_borders_y = torch.arange(0, max_y + bin_width_y, bin_width_y, device=self.device)
         
         # Initialize the small grid with zeros
-        small_pred = torch.zeros((self.small_grid_bins**2), dtype=torch.float32)
+        small_pred = torch.zeros((self.small_grid_bins**2), dtype=torch.float32, device=self.device)
 
         # Fill the small_grid with mean values for each bin,
         # by applying the bin_borders_x and bin_borders_y
@@ -356,13 +362,11 @@ class GPAgent:
         batch = random.sample(self.memory, self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
         return (
-            #torch.tensor(states, dtype=torch.float32),
-            torch.stack([state for state in states]),
-            torch.tensor(actions, dtype=torch.long),
-            torch.tensor(rewards, dtype=torch.float32),
-            #torch.tensor(next_states, dtype=torch.float32),
-            torch.stack([next_state for next_state in next_states]),
-            torch.tensor(dones, dtype=torch.float32),
+            torch.stack([state.to(self.device) for state in states]),
+            torch.tensor(actions, dtype=torch.long, device=self.device),
+            torch.tensor(rewards, dtype=torch.float32, device=self.device),
+            torch.stack([next_state.to(self.device) for next_state in next_states]),
+            torch.tensor(dones, dtype=torch.float32, device=self.device),
         )
 
     def train(self, training_per_episode=1):
@@ -372,8 +376,8 @@ class GPAgent:
 
             states, actions, rewards, next_states, dones = self.sample_memory()
 
-            current_q = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze()
-            next_q = self.policy_net(next_states).max(1)[0]
+            current_q = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze().to(self.device)
+            next_q = self.policy_net(next_states).max(1)[0].detach().to(self.device)
             target_q = rewards + self.gamma * next_q * (1 - dones)
 
             loss = nn.MSELoss()(current_q, target_q)
