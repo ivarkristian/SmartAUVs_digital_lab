@@ -1,12 +1,15 @@
 # %%
+import gpytorch.constraints
 import torch
 import random
 import matplotlib.pyplot as plt
 import importlib
 import timeit
+import gpytorch
 import rl_classes
 import path
-torch.set_default_device('cpu')
+#torch.set_default_device('cpu')
+
 # %%
 importlib.reload(rl_classes)
 
@@ -28,47 +31,39 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
     bin_tensor = torch.tensor([bin_x, bin_y])
     grid_offset = torch.tensor([2, 2], device=agent.device)
     new_loc_init_offset = torch.tensor([half_bin_x-1, half_bin_y-1])
-    times = [0]*20
 
     for episode in range(episodes):
-        #t = 0
-        #times[t] = timeit.default_timer(); t+=1
+        
         start_time = timeit.default_timer()
         total_reward = 0
         done = torch.tensor([0], device=agent.device)
         illegal_action_n = 0
-        # Init by sampling along a random line
         
+        # Init by sampling along a random line
         agent.location = torch.tensor([random.randint(0+half_bin_x, max_x-half_bin_y), random.randint(0+half_bin_y, max_y-half_bin_y)])
-        #times[t] = timeit.default_timer(); print(f'{t}: {(times[t]-times[t-1]):.2}'); t+=1
         new_loc = agent.location + new_loc_init_offset
         n_new_samples = env.step(agent.location, new_loc, agent.speed, agent.sampling_freq)
-        #times[t] = timeit.default_timer(); print(f'{t}: {(times[t]-times[t-1]):.2}'); t+=1
         agent.location = new_loc
         agent.small_grid_location = torch.div(agent.location, bin_tensor, rounding_mode='floor').to(agent.device) - grid_offset
-        #times[t] = timeit.default_timer(); print(f'{t}: {(times[t]-times[t-1]):.2}'); t+=1
+        
         # Init predictions
         current_prediction = agent.estimate_env(env.env_xy, env.sampled_coords, env.sampled_vals)
-        #times[t] = timeit.default_timer(); print(f'{t}: {(times[t]-times[t-1]):.2}'); t+=1
         agent.current_pred_mean = current_prediction.mean
         agent.current_pred_variance = current_prediction.variance
-        agent.small_grid_mean = agent.normalize(agent.make_small_grid(env.env_xy, current_prediction.mean))
-        agent.small_grid_variance = agent.normalize(agent.make_small_grid(env.env_xy, current_prediction.variance))
+        agent.small_grid_mean = agent.make_small_grid(env.env_xy, current_prediction.mean)
+        agent.small_grid_variance = agent.make_small_grid(env.env_xy, current_prediction.variance)
         state = torch.cat((agent.small_grid_variance, agent.small_grid_location))
-        #times[t] = timeit.default_timer(); print(f'{t}: {(times[t]-times[t-1]):.2}'); t+=1
+        
         for step in range(max_steps):
-            #t=0
-            #times[t] = timeit.default_timer(); t+=1
             #print('')
-            #agent.print_grid(agent.normalize(agent.small_grid_variance))
+            #agent.print_grid(agent.small_grid_variance)
             #print(f'Loc: {agent.small_grid_location}', end=' ')
-            action = agent.select_action(state, epsilon)
+            action = agent.select_action(state, epsilon, train_mode) # if train_mode is False, then no random actions
             #print(f'Action: ', end='')
             #agent.print_action(action)
 
             new_small_grid_loc = agent.new_small_grid_location_from_action(action)
-            #if new_small_grid_loc.max() >= agent_small_grid_bins or new_small_grid_loc.min() < 0:
-            #times[t] = timeit.default_timer(); print(f'{t}a: {(times[t]-times[t-1]):.2}'); t+=1
+            
             if new_small_grid_loc.max() > 2 or new_small_grid_loc.min() < -2:
                 new_small_grid_loc = agent.small_grid_location
                 new_loc = agent.location
@@ -78,8 +73,8 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
             else:
                 new_loc_x = (new_small_grid_loc[0] + 2)*bin_x + bin_x/2
                 new_loc_y = (new_small_grid_loc[1] + 2)*bin_y + bin_y/2
-                new_loc_x += random.randint(-half_bin_x, half_bin_x)
-                new_loc_y += random.randint(-half_bin_y, half_bin_y)
+                new_loc_x += random.randint(-int(half_bin_x/2), int(half_bin_x/2))
+                new_loc_y += random.randint(-int(half_bin_y/2), int(half_bin_y/2))
                 new_loc = torch.tensor((new_loc_x, new_loc_y), device='cpu') # keep new_loc on cpu
                 # path.path crashes if new_loc == old_loc
                 if (new_loc == agent.location).all():
@@ -87,7 +82,7 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
 
                 illegal_action = 0
                 n_new_samples = env.step(agent.location, new_loc, agent.speed, agent.sampling_freq)
-            #times[t] = timeit.default_timer(); print(f'{t}b: {(times[t]-times[t-1]):.2}'); t+=1
+            
             # The agents must have separate memories.
             # Move agent to new loc, while sampling.
             if n_new_samples:
@@ -98,18 +93,16 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
                 next_prediction_mean = agent.current_pred_mean
                 next_prediction_variance = agent.current_pred_variance
 
-            #times[t] = timeit.default_timer(); print(f'{t}c: {(times[t]-times[t-1]):.2}'); t+=1
-
             # New small_grids
-            next_small_grid_mean = agent.normalize(agent.make_small_grid(env.env_xy, next_prediction_mean))
-            next_small_grid_variance = agent.normalize(agent.make_small_grid(env.env_xy, next_prediction_variance))
-            #times[t] = timeit.default_timer(); print(f'{t}d: {(times[t]-times[t-1]):.2}'); t+=1            
+            next_small_grid_mean = agent.make_small_grid(env.env_xy, next_prediction_mean)
+            next_small_grid_variance = agent.make_small_grid(env.env_xy, next_prediction_variance)
+
             if illegal_action:
                 reward = -10
             else:
                 #reward = agent.compute_reward(agent.current_pred_variance, next_prediction_variance)
-                reward = agent.compute_reward(agent.small_grid_variance, next_small_grid_variance)*10
-            #times[t] = timeit.default_timer(); print(f'{t}e: {(times[t]-times[t-1]):.2}'); t+=1
+                reward = agent.compute_reward(agent.small_grid_variance, next_small_grid_variance)**2 # Encourage rewards above 1.0
+
             #print(f'Reward: {reward}')
             
             if step == max_steps - 1:
@@ -118,14 +111,14 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
             # state is small grid variance, could be small grid mean
             next_state = torch.cat((agent.small_grid_variance, new_small_grid_loc))
             agent.store_transition(state, action, reward, next_state, done)
-            #times[t] = timeit.default_timer(); print(f'{t}f: {(times[t]-times[t-1]):.2}'); t+=1
+
             agent.location = new_loc
             agent.small_grid_location = new_small_grid_loc
             agent.current_pred_mean = next_prediction_mean
             agent.current_pred_variance = next_prediction_variance
             agent.small_grid_mean = next_small_grid_mean
             agent.small_grid_variance = next_small_grid_variance
-            #times[t] = timeit.default_timer(); print(f'{t}g: {(times[t]-times[t-1]):.2}'); t+=1
+
             state = next_state
             total_reward += reward
             illegal_action_n += illegal_action
@@ -133,14 +126,15 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
                 break
 
         if train_mode:
-            #times[t] = timeit.default_timer(); print(f'{t}h: {(times[t]-times[t-1]):.2}'); t+=1
             agent.train(training_per_episode=min(episode, 5))
-            #times[t] = timeit.default_timer(); print(f'{t}i: {(times[t]-times[t-1]):.2}'); t+=1
             epsilon = max(epsilon * epsilon_decay, min_epsilon)
         
-        # Make plot
+        # Make plots
         if (episode == 0) or ((episode + 1) % 100 == 0):
             fig, ax = env.plot_env(title_postfix=f'ep {episode + 1}', path=True)
+        
+        if train_mode is False:
+            fig, ax = agent.plot_estimate(env.env_xy, next_prediction_variance, title=f'Variance ep: {episode} step {step}')
 
         end_time = timeit.default_timer()
         episode_time = end_time - start_time
@@ -152,14 +146,17 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
         # Save model
         if (episode + 1) % 100 == 0:
             agent.epsilon = epsilon
-            agent.save_model(agent.nn_filename)
+            if train_mode:
+                agent.save_model(agent.nn_filename)
 
         # Get ready for next episode
         env.reset() # delete sample memory
         agent.reset() # set small_grid_mean, small_grid_variance to 0
     
     agent.epsilon = epsilon
-    agent.save_model(agent.nn_filename)
+    if train_mode:
+        agent.save_model(agent.nn_filename)
+
     return total_rewards
 
 # %%
@@ -185,14 +182,15 @@ sampling_freq = 1.0
 agent_small_grid_bins = 5
 state_n = agent_small_grid_bins**2 + 2
 action_n = 4
-device = 'mps'
-agent = rl_classes.GPAgent(state_n, action_n, env.env_xy, agent_speed, sampling_freq, agent_small_grid_bins, nn_filename='my_nn.nn', device=device)
+device = 'cpu'
+lengthscale_constraint = gpytorch.constraints.Interval(9, 11)
+agent = rl_classes.GPAgent(state_n, action_n, env.env_xy, agent_speed, sampling_freq, agent_small_grid_bins, gp_lengthscale_constraint=lengthscale_constraint, nn_filename='my_nn_1.nn', device=device)
 
 # %%
 # Training
-episodes = 10
-steps = 100
-eps_decay = 0.99
+episodes = 800
+steps = 25
+eps_decay = 0.995
 total_rewards = train_agent(env, agent, episodes=episodes, max_steps=steps, epsilon_decay=eps_decay, train_mode=True)
 
 # %%
@@ -230,3 +228,5 @@ axes[2].grid(True)
 # Adjust layout and show plot
 plt.tight_layout()
 plt.show()
+
+# %%

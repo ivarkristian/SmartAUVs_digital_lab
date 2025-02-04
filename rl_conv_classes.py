@@ -2,12 +2,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
-#import gpytorch
+import gpytorch
 import numpy as np
 
+from gpt_class_exactgpmodel import ExactGPModel
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
+# %%
 class ScalarFieldEnv:
     def __init__(self, gp_mean, gp_variance, action_range=(-1, 1), patch_size=5):
         self.gp_mean = gp_mean
@@ -143,7 +145,21 @@ class CNNPolicyNetwork(nn.Module):
         return mean, std
     
 class PPOAgent:
-    def __init__(self, grid_size, action_dim, lr=1e-3):
+    def __init__(self, grid_size, action_dim, env_xy, speed, sampling_freq, learning_rate=1e-3, gamma=0.99, gp_lengthscale_constraint=gpytorch.constraints.Positive(), nn_filename=None):
+        self.env_xy = env_xy
+        self.speed = speed
+        self.sampling_freq = sampling_freq
+        self.length_constraint = gp_lengthscale_constraint
+        self.kernel_name = 'scale_rbf'
+        self.llh = gpytorch.likelihoods.GaussianLikelihood()
+        self.gamma = gamma
+        self.learning_rate = learning_rate
+        self.epsilon = 1.0
+        self.nn_filename = nn_filename
+        
+        if self.nn_filename:
+            self.load_model(self.nn_filename)
+
         self.policy_net = CNNPolicyNetwork(grid_size, action_dim)
         self.value_net = nn.Sequential(
             nn.Conv2d(in_channels=2, out_channels=32, kernel_size=3, stride=1, padding=1),
@@ -153,7 +169,12 @@ class PPOAgent:
             nn.ReLU(),
             nn.Linear(256, 1)
         )
-        self.optimizer = optim.Adam(list(self.policy_net.parameters()) + list(self.value_net.parameters()), lr=lr)
+        self.optimizer = optim.Adam(list(self.policy_net.parameters()) + list(self.value_net.parameters()), lr=1e-3)
+
+        self.reset_samples()
+
+    def reset_samples(self):
+        self.mdl = ExactGPModel(torch.tensor([]), torch.tensor([]), self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
 
     def get_action(self, gp_mean, gp_variance, position):
         mean, std = self.policy_net(gp_mean, gp_variance, position)
@@ -161,6 +182,21 @@ class PPOAgent:
         action = dist.sample()
         log_prob = dist.log_prob(action).sum(dim=-1)
         return action, log_prob
+
+    def estimate_env(self, env_xy, sampled_coords, sampled_vals):
+        if self.mdl is None:
+            self.mdl = ExactGPModel(sampled_coords, sampled_vals, self.llh, self.kernel_name, lengthscale_constraint=self.length_constraint)
+        
+        self.mdl.set_train_data(sampled_coords, sampled_vals, strict=False)
+        
+        # Then predict
+        self.mdl.eval()
+        self.mdl.likelihood.eval()
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            current_pred = self.mdl.likelihood(self.mdl(env_xy))
+    
+        return current_pred
 
     def compute_loss(self, gp_mean, gp_variance, position, actions, rewards, old_log_probs, advantages):
         # Policy loss
@@ -178,4 +214,33 @@ class PPOAgent:
         value_loss = nn.MSELoss()(values, rewards)
 
         return policy_loss + 0.5 * value_loss
+    
+    def save_model(self, filename=None):
+        """Save the model weights and optimizer state to a file."""
+        if filename is None:
+            filename = 'GPConvAgent.nn'
+        
+        torch.save({
+            'policy_state_dict': self.policy_net.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'learning_rate': self.learning_rate,
+            'gamma': self.gamma,
+            'epsilon': self.epsilon
+        }, filename)
+        print(f"Model saved to {filename}")
+
+    def load_model(self, filename=None):
+        """Load model weights and optimizer state from a file."""
+        try:
+            checkpoint = torch.load(filename, weights_only=True)
+            self.policy_net.load_state_dict(checkpoint['policy_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.learning_rate = checkpoint.get('learning_rate', self.learning_rate)
+            self.gamma = checkpoint.get('gamma', self.gamma)
+            self.epsilon = checkpoint.get('epsilon', self.epsilon)
+            print(f"Model loaded from {filename}")
+        except FileNotFoundError:
+            print(f"No saved model found at {filename}, starting fresh.")
+        except Exception as e:
+            print(f'Error loading model: {e}')
 

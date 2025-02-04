@@ -13,7 +13,10 @@ def train_conv_agent(env, agent, episodes, max_steps):
     for episode in range(episodes):
         state = env.reset()
         done = False
+        steps = 0
         rewards, log_probs, actions, states, positions = [], [], [], [], []
+
+        # init samples and prediction
 
         while not done:
             gp_mean = torch.FloatTensor(state["gp_mean"]).unsqueeze(0)  # Add batch dimension
@@ -23,8 +26,15 @@ def train_conv_agent(env, agent, episodes, max_steps):
             # Get action from policy
             action, log_prob = agent.get_action(gp_mean, gp_variance, position)
 
+            # Compute new_loc from dx, dy in action
+            new_loc = agent.location + torch.tensor([action[0], action[1]])
+
             # Interact with environment
-            next_state, reward, done = env.step(action.detach().numpy())
+            n_new_samples = env.step(agent.location, new_loc, agent.speed, agent.sampling_freq)
+            if n_new_samples:
+                next_prediction = agent.estimate_env(env.env_xy, env.sampled_coords, env.sampled_vals)
+            
+            next_state, reward, done
 
             # Store experience
             rewards.append(reward)
@@ -35,6 +45,9 @@ def train_conv_agent(env, agent, episodes, max_steps):
 
             # Update state
             state = next_state
+            steps += 1
+            if steps == max_steps:
+                done = 1
 
         # Compute advantages
         rewards = torch.FloatTensor(rewards)

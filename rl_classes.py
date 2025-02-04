@@ -1,4 +1,5 @@
 import os
+import gpytorch.constraints
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -168,7 +169,7 @@ class PolicyNetwork(nn.Module):
 
 # Step 3: Define the Agent
 class GPAgent:
-    def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99, nn_filename=None, device='mps'):
+    def __init__(self, input_dim, action_space, env_xy, speed, sampling_freq, small_grid_bins=5, learning_rate=1e-3, gamma=0.99, gp_lengthscale_constraint=gpytorch.constraints.Positive(), nn_filename=None, device='mps'):
         # Init the static parameters
         self.device = torch.device(device)
         self.nn_filename = nn_filename
@@ -184,7 +185,8 @@ class GPAgent:
         self.memory = deque(maxlen=100000)
         self.batch_size = 64
         self.llh = gpytorch.likelihoods.GaussianLikelihood()
-        self.length_constraint = gpytorch.constraints.Positive()
+        #self.lengthscale_initial = gp_lengthscale_initial
+        self.length_constraint = gp_lengthscale_constraint
         self.kernel_name = 'scale_rbf'
         self.env_xy = env_xy
         self.small_grid_bins = small_grid_bins
@@ -233,8 +235,9 @@ class GPAgent:
         except Exception as e:
             print(f'Error loading model: {e}')
 
-    def select_action(self, state, epsilon=0.1):
-        if random.random() < epsilon:
+    def select_action(self, state, epsilon=0.1, train_mode=True):
+        # state parameter not used, but should be in the future for a more flexible function
+        if train_mode and (random.random() < epsilon):
             return random.randint(0, self.policy_net.fc3.out_features - 1)
         else:
             with torch.no_grad():
@@ -300,6 +303,21 @@ class GPAgent:
     
         return current_pred
     
+    def plot_estimate(self, env_xy, val, path=None, title=None):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        scatter = ax.scatter(env_xy[:, 0], env_xy[:, 1], c=val, cmap='coolwarm', s=2, vmin=val.min(), vmax=val.max())
+        
+        cbar = fig.colorbar(scatter, ax=ax)
+        cbar.set_label('Value')
+
+        # Add labels and title
+        ax.set_xlabel('Easting [m]')
+        ax.set_ylabel('Northing [m]')
+        if title:
+            ax.set_title(title)
+
+        return fig, ax
+
     def compute_reward(self, current_prediction, next_prediction):
         total_change = (current_prediction - next_prediction).abs().sum()
         reward = total_change
