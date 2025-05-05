@@ -55,12 +55,13 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
         state = torch.cat((agent.small_grid_variance, agent.small_grid_location))
         
         for step in range(max_steps):
-            #print('')
-            #agent.print_grid(agent.small_grid_variance)
-            #print(f'Loc: {agent.small_grid_location}', end=' ')
             action = agent.select_action(state, epsilon, train_mode) # if train_mode is False, then no random actions
-            #print(f'Action: ', end='')
-            #agent.print_action(action)
+            if train_mode is False:
+                print('')
+                agent.print_grid(agent.small_grid_variance)
+                print(f'Loc: {agent.small_grid_location}', end=' ')
+                print(f'Action: ', end='')
+                agent.print_action(action)
 
             new_small_grid_loc = agent.new_small_grid_location_from_action(action)
             
@@ -101,9 +102,10 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
                 reward = -10
             else:
                 #reward = agent.compute_reward(agent.current_pred_variance, next_prediction_variance)
-                reward = agent.compute_reward(agent.small_grid_variance, next_small_grid_variance)**2 # Encourage rewards above 1.0
+                reward = (agent.compute_reward(agent.small_grid_variance, next_small_grid_variance)*10)**2 # Encourage rewards above 1.0
 
-            #print(f'Reward: {reward}')
+            if train_mode is False:
+                print(f'Reward: {reward}')
             
             if step == max_steps - 1:
                 done[0] = 1
@@ -130,7 +132,7 @@ def train_agent(env, agent, episodes=1000, max_steps=200, epsilon_decay=0.98, mi
             epsilon = max(epsilon * epsilon_decay, min_epsilon)
         
         # Make plots
-        if (episode == 0) or ((episode + 1) % 100 == 0):
+        if (episode == 0) or ((episode + 1) % 1 == 0):
             fig, ax = env.plot_env(title_postfix=f'ep {episode + 1}', path=True)
         
         if train_mode is False:
@@ -184,14 +186,16 @@ state_n = agent_small_grid_bins**2 + 2
 action_n = 4
 device = 'cpu'
 lengthscale_constraint = gpytorch.constraints.Interval(9, 11)
-agent = rl_classes.GPAgent(state_n, action_n, env.env_xy, agent_speed, sampling_freq, agent_small_grid_bins, gp_lengthscale_constraint=lengthscale_constraint, nn_filename='my_nn_1.nn', device=device)
+nn_file = 'my_nn_1.nn'
+agent = rl_classes.GPAgent(state_n, action_n, env.env_xy, agent_speed, sampling_freq, agent_small_grid_bins, gp_lengthscale_constraint=lengthscale_constraint, nn_filename=nn_file, device=device)
 
 # %%
 # Training
-episodes = 800
+episodes = 3
 steps = 25
 eps_decay = 0.995
-total_rewards = train_agent(env, agent, episodes=episodes, max_steps=steps, epsilon_decay=eps_decay, train_mode=True)
+train_mode = False
+total_rewards = train_agent(env, agent, episodes=episodes, max_steps=steps, epsilon_decay=eps_decay, train_mode=train_mode)
 
 # %%
 # Extract values
@@ -206,7 +210,7 @@ fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
 # Total reward plot
 axes[0].plot(episodes, total_reward_values, label="Total Reward", color='blue', linestyle='-', marker='.')
 axes[0].set_ylabel("Total Reward")
-axes[0].set_title("Total Reward per Episode")
+axes[0].set_title(f"Total Reward per Episode ({steps} steps)")
 axes[0].legend()
 axes[0].grid(True)
 

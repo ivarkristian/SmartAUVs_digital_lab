@@ -112,7 +112,7 @@ df = pd.DataFrame(data_list[4:])
 # %%
 # Assuming 'environments' is your list of figures
 anisotropies = [1, 180]
-titles = ['Plain pattern, SE kernel (RMSE = 0.08)', 'Plain pattern, SE-ARD kernel (RMSE = 0.06)', 'Grid pattern, SE kernel (RMSE = 0.05)', 'Plain pattern, SE-ARD kernel (RMSE = 0.02)']
+titles = ['Plain pattern, SE kernel (RMSE = 0.08)', 'Plain pattern, SE-ARD kernel (RMSE = 0.06)', 'Grid pattern, SE kernel (RMSE = 0.05)', 'Grid pattern, SE-ARD kernel (RMSE = 0.02)']
 #for i, anisotropy in enumerate(anisotropies):
 #    titles.append(f'Anisotropy = {anisotropy}')
 
@@ -329,3 +329,5 @@ ax.text(arr_start[0] - 25, arr_start[1], r'($S = 20m$)',
 # Save the figure as an EPS file with high DPI
 fig.savefig('figures/' + 'geometry_definitions.eps', format='eps', dpi=300)
 fig
+
+# %%

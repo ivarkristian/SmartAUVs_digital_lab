@@ -332,6 +332,6 @@ def plot_3d_measurement_animated(
     return fig
 
 # %%
-fig = plot_3d_measurement_animated(df, marker_size=4, static_axes=False)
+fig = plot_3d_measurement_animated(df, marker_size=4, static_axes=False, measurement_col='AADIO2_PartialPressure_mbar')
 fig.show(renderer="browser")
 #fig.show()

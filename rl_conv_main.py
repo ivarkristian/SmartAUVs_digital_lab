@@ -1,11 +1,38 @@
 # %%
+# 1. Train CNN for area coverage using only variance channel - implement
+# the prediction inside the environment
+# 2. Include ScenarioBank class to help generalize learning
+# 3. Test reward based on correctness of prediction mean vs. rewards for
+# exploration and exploitation
+
+
+# %%
 import importlib
 import torch
-import rl_conv_classes
+import rl_scenario_bank
+#import rl_conv_classes
 import rl_classes
 
 # %%
-importlib.reload(rl_conv_classes)
+#importlib.reload(rl_conv_classes)
+importlib.reload(rl_scenario_bank)
+
+# %%
+bank = rl_scenario_bank.ScenarioBank()
+
+data_dir = '../scenario_1c_medium/'
+data_file = 'SMART-AUVs_OF-June-1c-0003.nc'
+param = 'pCO2'
+depth = 66
+time = 3
+
+bank.load_dataset(data_file)
+
+# %%
+bank.add_env(param, depth, 5)
+
+# %%
+bank.print_envs_info()
 
 # %%
 def train_conv_agent(env, agent, episodes, max_steps):

@@ -8,6 +8,8 @@ from io import BytesIO
 import matplotlib.image as mpimg
 import seaborn as sns
 from matplotlib.lines import Line2D
+import matplotlib.colors as colors
+import matplotlib.cm as cm
 import importlib
 
 import pickle_reader
@@ -215,14 +217,14 @@ for i, kernel_type in enumerate(kernel_types):
         # Plot dashed lines for upper and lower bounds
         ax.plot(
             subset['anisotropy'],
-            subset['RMSE_mean_smooth'] + subset['RMSE_se_smooth'],
+            subset['RMSE_mean_smooth'] + 1.96*subset['RMSE_se_smooth'],
             linestyle='--',
             color=palette[idx],
             linewidth=1.0,
         )
         ax.plot(
             subset['anisotropy'],
-            subset['RMSE_mean_smooth'] - subset['RMSE_se_smooth'],
+            subset['RMSE_mean_smooth'] - 1.96*subset['RMSE_se_smooth'],
             linestyle='--',
             color=palette[idx],
             linewidth=1.0,
@@ -738,14 +740,15 @@ print(df_interesting)
 # Assuming 'environments' is your list of figures
 
 tss = df_original['ts'].unique()
+tss = [tss[0], tss[2]]
 titles = []
-for i, angle in enumerate(advection_angles):
+for i, angle in enumerate([advection_angles[0], advection_angles[2]]):
     titles.append(str(tss[i]*10) + ' minutes,' + r" $\alpha$ = " + str(angle))
 
 # Initialize variables to collect image data and determine global vmin and vmax
 # Remove color bars and save figures to images
 image_list = []
-for i, fig in enumerate(environments):
+for i, fig in enumerate([environments[0], environments[2]]):
     ax = fig.axes[0]
     ax.set_title('')  # Remove existing title
     ax.set_title(titles[i], fontsize=16)  # Set new title
@@ -765,7 +768,7 @@ for i, fig in enumerate(environments):
     image_list.append(img)
 
 # Create a new figure with 2x2 subplots
-fig_combined, axes = plt.subplots(2, 2, figsize=(10, 8))
+fig_combined, axes = plt.subplots(1, 2, figsize=(10, 5))
 axes = axes.flatten()
 
 # Display images in subplots
@@ -780,14 +783,14 @@ fig_combined.suptitle('Emission snapshots', fontsize=16, fontweight='bold', x=0.
 fig_combined.subplots_adjust(
     left=0.05,   # Reduce left margin
     right=0.75,  # Reduce right margin
-    bottom=0.12, # Reduce bottom margin to make space for color bar
-    top=0.92,    # Slightly reduce top margin
+    bottom=0.25, # Reduce bottom margin to make space for color bar
+    top=0.90,    # Slightly reduce top margin
     wspace=-0.04, # Minimize horizontal space between subplots
     hspace=0.01  # Minimize vertical space between subplots
 )
 
 # Add a single color bar at the bottom with reduced width
-cbar_ax = fig_combined.add_axes([0.2, 0.08, 0.4, 0.03])  # [left, bottom, width, height]
+cbar_ax = fig_combined.add_axes([0.2, 0.22, 0.4, 0.03])  # [left, bottom, width, height]
 norm = colors.Normalize(vmin=0, vmax=1.0)
 sm = cm.ScalarMappable(cmap='coolwarm', norm=norm)
 sm.set_array([])
@@ -820,7 +823,8 @@ kernel_types = ['SE', 'SE-ARD']
 # Filter values (include both kernel_types by not specifying 'kernel_type' in the filter)
 filter_values = {
     'angle_delta': [80, 100],
-    'grid_type': 'plain'
+    'grid_type': 'plain',
+    'advection_angle': {5, -50}
 }
 
 # Filter the DataFrame using your filter_df function
@@ -860,7 +864,7 @@ g.map_dataframe(
 
 # Adjust the titles and labels
 g.set_titles('Time step: {col_name}')
-g.set_axis_labels('Spacing', 'RMSE')
+g.set_axis_labels('Line spacing [m]', 'RMSE')
 
 # Add a legend for kernel_type
 g.add_legend(title='Kernel Type', fontsize=10, title_fontsize=11)
@@ -876,22 +880,24 @@ for ax in g.axes.flatten():
     ax.tick_params(axis='x')
 
 # Manually set the titles for each subplot
-
+#advection_angles = [advection_angles[0], advection_angles[2]]
 for i, ax in enumerate(g.axes.flat):
-    ax.set_title(f"{df_original['ts'].unique()[i]*10} minutes, " + r'$\alpha$=' + f"{advection_angles[i]}")
+    ax.set_title(f"{df_original['ts'].unique()[i*2]*10} minutes, " + r'$\alpha$=' + f"{advection_angles[i]}")
 
 # Add a suptitle
 g.figure.suptitle('RMSE by snapshot, spacing, and kernel type', fontsize=16, fontweight='bold')
 # Add the subtitle beneath the main title
 g.figure.text(
-    0.5, 0.91,  # Adjust the y-coordinate as needed
+    0.92, 0.24,  # Adjust the y-coordinate as needed
     r'$\delta \in [80, 100]^\circ$',
     ha='center',
-    fontsize=12
+    fontsize=10
 )
 
 # Adjust the layout to make space for the titles
-g.figure.subplots_adjust(top=0.86)  # Adjust top to make room for the suptitle and subtitle
+#top = 0.86
+top = 0.76
+g.figure.subplots_adjust(top=top)  # Adjust top to make room for the suptitle and subtitle
 
 
 g.savefig('figures/' + 'netCDF_spacings.eps', format='eps', dpi=300)

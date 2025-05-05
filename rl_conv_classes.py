@@ -9,6 +9,154 @@ from gpt_class_exactgpmodel import ExactGPModel
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
+import numpy as np
+import gym
+from stable_baselines3 import PPO
+
+# %%
+# Definitions
+
+# %%
+class GasSurveyEnv(gym.Env):
+    def __init__(self, scenario_bank, gp_ls_constraint=10, gp_kernel_type='scale_rbf', gp_pred_resolution=None):
+        super().__init__()
+
+        self.scenario_bank = scenario_bank
+        self.ls_const = gp_ls_constraint
+        self.kernel_type = gp_kernel_type
+        self.reset()
+
+        if gp_pred_resolution:
+            # We want to downsample the resolution:
+            self.obs_x, self.obs_y = gp_pred_resolution
+            self.pred_coords = self._create_obs_coords()
+        else:
+            # We want full resolution observation and action space:
+            self.obs_x = len(self.env_xy[:, 0])
+            self.obs_y = len(self.env_xy[:, 1])
+            self.pred_coords = self.env_xy
+        
+        # Action space is a float anywhere inside this box:
+        self.action_space = gym.spaces.Box(low=np.array([0., 0.]),
+                                high=np.array([self.env_xy[:, 0].max(), self.env_xy[:, 1].max()]),
+                                dtype=np.float32)
+
+        # μ, σ, visited, coord‑Y, coord‑X  → 5 possible channels
+        # Could instead of 'visited' include location channels
+        # Including coord_x/y channels is a bit dangerous, should
+        # randomize direction of scenarios, e.g. rotate by 90/180 deg
+        # to avoid 'learning the coordinate system'
+        self.channels = np.array([0, 1, 0, 1, 1])
+        self.observation_space = gym.spaces.Box(
+            low=0.0, high=1.0, shape=(self.channels.sum(), self.obs_x, self.obs_y), dtype=np.float32
+        )
+
+    def _render_layers(self) -> np.ndarray:
+        """
+        Assemble the observation tensor.
+
+        Channels (fixed order):
+            0: μ‑field  (self.mu_norm)
+            1: σ‑field  (self.sigma_norm)
+            2: visited  mask (self.visited)
+            3: Coord‑Y  channel (self.coord_y)
+            4: Coord‑X  channel (self.coord_x)
+
+        Only the layers whose corresponding entry in `self.channels`
+        is truthy (1 / True) are stacked.
+        """
+        # List all *possible* layers in a canonical order
+        candidate_layers = [
+            self.mu_norm,     # idx 0
+            self.sigma_norm,  # idx 1
+            self.visited,     # idx 2
+            self.coord_y,     # idx 3
+            self.coord_x      # idx 4
+        ]
+
+        # Select the ones flagged by `self.channels`
+        chosen_layers = [
+            layer for layer, flag in zip(candidate_layers, self.channels) if flag
+        ]
+
+        # Sanity‑check: number of layers matches observation_space
+        assert len(chosen_layers) == self.channels.sum(), \
+            "Mismatch between channel mask and selected layers"
+
+        # Stack into (C, H, W) NumPy array expected by Gym
+        stacked = np.stack(chosen_layers, axis=0).astype(np.float32)
+        return stacked
+
+    def reset(self):
+        # Draw a random scenario/snapshot
+        self.env_xy, self.values, self.metadata = self.scenario_bank.sample()
+        
+        # Init GP model
+        self.llh = gpytorch.likelihoods.GaussianLikelihood()
+        self.mdl = ExactGPModel(torch.tensor([]), torch.tensor([]), self.llh, self.kernel_type, lengthscale_constraint=self.ls_const)
+        self.mu_norm = torch.zeros(len(self.pred_coords))
+        self.sigma_norm = torch.ones(len(self.pred_coords))
+
+        self.visited = torch.zeros(len(self.pred_coords))
+        
+        # Init sample memory and location
+        self.sampled_coords = torch.tensor([])
+        self.sampled_vals = torch.tensor([])
+        self.location = torch.tensor((0, 0, 0))
+        
+        # Init observation channels
+        obs = self._render_layers()
+        return obs, {}
+
+    def step(self, action, speed, sample_freq):
+        # action = absolute (x,y) or Δx,Δy; clip, update GP, rewards...
+        start_time = '2020-01-01T02:10:00.000000000' # dummy time
+        synoptic = True
+        old_loc = self.location
+        new_loc = action
+
+        sample_coords = path.path([old_loc, new_loc], start_time, speed, sample_freq, synoptic)
+        # Extract the first two elements of each tuple and convert to a torch tensor
+        sample_coords_xy = torch.tensor([(float(t[0]), float(t[1])) for t in sample_coords])
+
+        measurements = torch.zeros(len(sample_coords_xy), dtype=torch.float32)
+        radius = 1.0 # Radius of sample averaging
+        for c, coord in enumerate(sample_coords_xy):
+            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.x, self.y, self.val, coord.numpy(), radius)
+        
+        self.sampled_coords = torch.cat((self.sampled_coords, sample_coords_xy))
+        self.sampled_vals = torch.cat((self.sampled_vals, measurements))
+
+        self.estimate()
+        obs  = self._render_layers()
+        done = ...
+        info = {}
+        return obs, reward, done, False, info
+    
+    def estimate(self):
+        if self.mdl is None:
+            self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const)
+        
+        self.mdl.set_train_data(self.sampled_coords, self.sampled_vals, strict=False)
+        
+        # Then predict
+        self.mdl.eval()
+        self.mdl.likelihood.eval()
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            current_pred = self.mdl.likelihood(self.mdl(self.pred_coords))
+    
+        return current_pred
+
+    def _create_obs_coords(self):
+        gx, gy = np.meshgrid(np.arange(self.obs_x), np.arange(self.obs_y), indexing='ij')
+        
+        
+        coords = np.stack([gx, gy], dim=-1)      # shape: (a, b, 2)
+        
+        return coords.reshape(-1, 2)
+        
+
 # %%
 class ScalarFieldEnv:
     def __init__(self, gp_mean, gp_variance, action_range=(-1, 1), patch_size=5):
