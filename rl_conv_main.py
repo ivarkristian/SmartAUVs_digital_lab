@@ -10,11 +10,11 @@
 import importlib
 import torch
 import rl_scenario_bank
-#import rl_conv_classes
+import rl_conv_classes
 import rl_classes
 
 # %%
-#importlib.reload(rl_conv_classes)
+importlib.reload(rl_conv_classes)
 importlib.reload(rl_scenario_bank)
 
 # %%
@@ -27,12 +27,13 @@ depth = 66
 time = 3
 
 bank.load_dataset(data_file)
-
-# %%
 bank.add_env(param, depth, 5)
 
 # %%
 bank.print_envs_info()
+
+# %%
+env = rl_conv_classes.GasSurveyEnv(bank)
 
 # %%
 def train_conv_agent(env, agent, episodes, max_steps):
