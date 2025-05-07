@@ -117,6 +117,31 @@ class ScenarioBank:
     def sample(self):
         return random.choice(self.environments)
 
+    def get_minmax(self):
+        maxes = torch.zeros(len(self.environments))
+        mins = torch.zeros(len(self.environments))
+        for c, env in enumerate(self.environments):
+            maxes[c] = env['values'].max()
+            mins[c] = env['values'].min()
+        
+        return mins.min(), maxes.max()
+    
+    def get_mu_sigma2(self):
+        ns = torch.zeros(len(self.environments))
+        mus = torch.zeros(len(self.environments))
+        sigma2s = torch.zeros(len(self.environments))
+        for c, env in enumerate(self.environments):
+            ns[c] = len(env['values'])
+            mus[c] = env['values'].mean()
+            sigma2s[c] = env['values'].var()
+        
+        N = ns.sum()
+        mu_all = (ns * mus).sum() / N
+        ss = ns * (sigma2s + mus**2)
+        sigma2_all = ss.sum() / N - mu_all**2
+
+        return mu_all, sigma2_all
+    
     def reset(self):
         self.sampled_coords = torch.tensor([])
         self.sampled_vals = torch.tensor([])

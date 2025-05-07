@@ -28,6 +28,9 @@ time = 3
 
 bank.load_dataset(data_file)
 bank.add_env(param, depth, 5)
+bank.add_env('pCO2', 67, 1)
+bank.add_env('pCO2', 67, 2)
+bank.add_env('pCO2', 67, 3)
 
 # %%
 bank.print_envs_info()
