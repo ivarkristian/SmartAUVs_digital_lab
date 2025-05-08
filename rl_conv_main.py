@@ -23,8 +23,8 @@ bank = rl_scenario_bank.ScenarioBank()
 data_dir = '../scenario_1c_medium/'
 data_file = 'SMART-AUVs_OF-June-1c-0003.nc'
 param = 'pCO2'
-depth = 66
-time = 3
+depth = 67
+time = 4
 
 bank.load_dataset(data_file)
 bank.add_env(param, depth, 5)
@@ -32,11 +32,12 @@ bank.add_env('pCO2', 67, 1)
 bank.add_env('pCO2', 67, 2)
 bank.add_env('pCO2', 67, 3)
 
-# %%
-bank.print_envs_info()
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[250, 250])
 
-# %%
-env = rl_gas_survey_env.GasSurveyEnv(bank)
+
+
+
+
 
 # %%
 def train_conv_agent(env, agent, episodes, max_steps):

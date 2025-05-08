@@ -22,14 +22,6 @@ class ScenarioBank:
         self.data_dir = data_dir
         self.data_file = None
         self.dataset = None
-        #self.parameter = None
-        #self.depth = None
-        #self.time = None
-        #self.val = None
-        #self.x = None
-        #self.y = None
-        #self.sampled_coords = torch.tensor([])
-        #self.sampled_vals = torch.tensor([])
         self.environments = []
 
         # Read and clean list of .nc files
@@ -72,7 +64,7 @@ class ScenarioBank:
         env_xy = torch.tensor(np.column_stack((x, y)), dtype=torch.float32)
         metadata = {'parameter': parameter, 'depth': depth, 'time': time, 'data_file': self.data_file}
 
-        return env_xy, values, metadata
+        return env_xy, torch.tensor(values), metadata
     
     def add_env(self, parameter='pH', depth=67, time=1):
         env_xy, values, metadata = self.get_env(parameter, depth, time)
@@ -142,43 +134,3 @@ class ScenarioBank:
 
         return mu_all, sigma2_all
     
-    def reset(self):
-        self.sampled_coords = torch.tensor([])
-        self.sampled_vals = torch.tensor([])
-        return
-    
-    def append_z_to_xy(self, xy):
-        if len(xy) == 2:
-            return torch.cat((xy, torch.tensor([self.depth])))
-        else:
-            return xy
-
-    def step(self, old_loc, new_loc, speed, sampling_freq):
-        # Move to new location while sampling
-        # Action should specify old and new location and speed so that sampling points
-        # and reward can be computed
-        start_time = '2020-01-01T02:10:00.000000000' # dummy time
-
-        # Perhaps make a more flexible function for non-synoptic sampling
-        # (although that is much slower)
-        synoptic = True
-        old_loc = self.append_z_to_xy(old_loc)
-        new_loc = self.append_z_to_xy(new_loc)
-        old_loc_cpu = old_loc.cpu()
-        new_loc_cpu = new_loc.cpu()
-        #print(f'old_loc: {old_loc}, new_loc: {new_loc}')
-        sample_coords = path.path([old_loc_cpu, new_loc_cpu], start_time, speed, sampling_freq, synoptic)
-        # Extract the first two elements of each tuple and convert to a torch tensor
-        sample_coords_xy = torch.tensor([(float(t[0]), float(t[1])) for t in sample_coords])
-
-        measurements = torch.zeros(len(sample_coords_xy), dtype=torch.float32)
-        radius = 1.0 # Radius of sample averaging
-        for c, coord in enumerate(sample_coords_xy):
-            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.x, self.y, self.val, coord.numpy(), radius)
-        
-        self.sampled_coords = torch.cat((self.sampled_coords, sample_coords_xy))
-        self.sampled_vals = torch.cat((self.sampled_vals, measurements))
-
-        # next_state, reward, done, _ 
-        return len(measurements)
-
