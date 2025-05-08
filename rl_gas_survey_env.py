@@ -1,17 +1,13 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.distributions import Normal
 import gpytorch
 import numpy as np
+import gym
 
 from gpt_class_exactgpmodel import ExactGPModel
 import path
 import chem_utils
 
-import numpy as np
-import gym
-from stable_baselines3 import PPO
+
 
 # %%
 # Definitions

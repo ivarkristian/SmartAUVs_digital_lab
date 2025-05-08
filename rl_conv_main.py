@@ -10,11 +10,11 @@
 import importlib
 import torch
 import rl_scenario_bank
-import rl_conv_classes
+import rl_gas_survey_env
 import rl_classes
 
 # %%
-importlib.reload(rl_conv_classes)
+importlib.reload(rl_gas_survey_env)
 importlib.reload(rl_scenario_bank)
 
 # %%
@@ -36,7 +36,7 @@ bank.add_env('pCO2', 67, 3)
 bank.print_envs_info()
 
 # %%
-env = rl_conv_classes.GasSurveyEnv(bank)
+env = rl_gas_survey_env.GasSurveyEnv(bank)
 
 # %%
 def train_conv_agent(env, agent, episodes, max_steps):
@@ -112,7 +112,7 @@ sampling_freq = 1.0
 agent_small_grid_bins = 5
 state_n = agent_small_grid_bins**2 + 2
 action_n = 4
-agent = rl_conv_classes.PPOAgent(state_n, action_n, env.env_xy, agent_speed, sampling_freq, agent_small_grid_bins, nn_filename='my_nn.nn')
+agent = rl_gas_survey_env.PPOAgent(state_n, action_n, env.env_xy, agent_speed, sampling_freq, agent_small_grid_bins, nn_filename='my_nn.nn')
 
 # %%
 total_rewards = train_conv_agent(env, agent, episodes=1000, max_steps=100, epsilon_decay=0.99, train_mode=True)
