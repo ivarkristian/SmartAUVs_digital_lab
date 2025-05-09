@@ -12,10 +12,12 @@ import torch
 import rl_scenario_bank
 import rl_gas_survey_env
 import rl_classes
+import chem_utils
 
 # %%
 importlib.reload(rl_gas_survey_env)
 importlib.reload(rl_scenario_bank)
+importlib.reload(chem_utils)
 
 # %%
 bank = rl_scenario_bank.ScenarioBank()

@@ -33,7 +33,7 @@ class GasSurveyEnv(gym.Env):
         # Including coord_x/y channels is a bit dangerous, should
         # randomize direction of scenarios, e.g. rotate by 90/180 deg
         # to avoid 'learning the coordinate system'
-        self.channels = np.array([0, 1, 1, 0, 0])
+        self.channels = np.array([1, 1, 1, 0, 0])
 
         # reset draws a random scenario, initializes GP model and sample memory
         self.reset()
@@ -79,10 +79,8 @@ class GasSurveyEnv(gym.Env):
         self.mdl.covar_module.outputscale = torch.tensor(1.0)   # fixed prior variance 1
         self.variance_prior = self.mdl.get_outputscale()   # = 1.0
 
-        # Init normalized coords and values for GP model
-        # coords_flat_norm is [0, 1]
-        self.coords_flat_norm = np.stack([self.coord_x_norm, self.coord_y_norm], axis=-1)
-        # values
+        # Init downsampled and normalized values for GP model
+        # NB! Should downsample all environments first, in the bank!
         self.values = self._downsample(radius=1.0)
         
         # NB! Have to recompute 
@@ -115,7 +113,8 @@ class GasSurveyEnv(gym.Env):
         # action = absolute (x,y) or Δx,Δy; clip, update GP, rewards...
         start_time = '2020-01-01T02:10:00.000000000' # dummy time
         synoptic = True
-        old_loc = torch.tensor([self.location.argmax(axis=1).argmax(), self.location.argmax(axis=0).argmax()])
+        old_loc_y, old_loc_x = np.argwhere(self.location)[0]
+        old_loc = torch.tensor([old_loc_x, old_loc_y])
         old_var = self.pred_var_norm
 
         # expects action to be a pair of locs within [0, 255]
@@ -130,9 +129,11 @@ class GasSurveyEnv(gym.Env):
         sample_coords_norm = sample_coords_xy / torch.tensor([self.env_x_max, self.env_y_max])
 
         measurements = torch.zeros(len(sample_coords_xy), dtype=torch.float32)
-        radius = 1.0/self.env_x_max # Radius of sample averaging
-        for c, coord in enumerate(sample_coords_norm):
-            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.coord_x_norm, self.coord_y_norm, self.values_norm_zscale, coord.numpy(), radius)
+        radius = 1.0 # Radius of sample averaging
+        
+        for c, coord in enumerate(sample_coords_xy):
+            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self._coords_flat[:, 0], self._coords_flat[:, 1], self.values_norm_zscale, coord.numpy(), radius)
+            print(f'{coord} - {measurements[c]}')
         
         self.sampled_coords = torch.cat((self.sampled_coords, sample_coords_xy))
         self.sampled_coords_norm = torch.cat((self.sampled_coords_norm, sample_coords_norm))
@@ -141,8 +142,8 @@ class GasSurveyEnv(gym.Env):
         self.estimate() # fill self.pred_mu self.pred_var and normalized equivalents
         
         # Update location
-        self.location[old_loc[0], old_loc[1]] = 0.0
-        self.location[new_loc[0], new_loc[1]] = 1.0
+        self.location[old_loc[1], old_loc[0]] = 0.0
+        self.location[new_loc[1], new_loc[0]] = 1.0
         
         # compute reward (based on decrease in overall variance)
         reward = (old_var - self.pred_var_norm).sum()
@@ -239,6 +240,7 @@ class GasSurveyEnv(gym.Env):
         )
         
         # -- 2. static coordinate channels, normalised [0, 1] --
+        self.coords_flat_norm = self._coords_flat/torch.tensor([self.env_x_max, self.env_y_max])
         self.coord_x_norm = (gx / xs.max())  # (H, W)
         self.coord_y_norm = (gy / ys.max())  # (H, W)
 
@@ -268,12 +270,22 @@ class GasSurveyEnv(gym.Env):
         else:
             return xy
 
-    def plot_env(self, x=None, y=None, c=None, path=None):
+    def plot_env(self, x=None, y=None, c=None, path=None, x_range=[0, 250], y_range=[0, 250]):
+
+        if x is None:
+            x = self._coord_x
+        if y is None:
+            y = self._coord_y
+        if c is None:
+            c = self.values
 
         fig, ax = plt.subplots(figsize=(8, 6))
         scatter = ax.scatter(x, y, c=c, cmap='coolwarm', s=1, vmin=c.min(), vmax=c.max())
         if path:
             ax.scatter(path[:, 0], path[:, 1], c='black', s=2)
+        
+        ax.set_xlim(x_range[0], x_range[1])
+        ax.set_ylim(y_range[0], y_range[1])
         
         cbar = fig.colorbar(scatter, ax=ax)
         cbar.set_label('Value')
