@@ -9,6 +9,9 @@
 # %%
 import importlib
 import torch
+from stable_baselines3 import PPO
+import os
+import time
 import rl_scenario_bank
 import rl_gas_survey_env
 import rl_classes
@@ -28,17 +31,49 @@ param = 'pCO2'
 depth = 67
 time = 4
 
+# %%
 bank.load_dataset(data_file)
-bank.add_env(param, depth, 5)
+
 bank.add_env('pCO2', 67, 1)
 bank.add_env('pCO2', 67, 2)
 bank.add_env('pCO2', 67, 3)
 
+# %%
+models_dir = f"models/{int(time.time())}/"
+logdir = f"logs/{int(time.time())}/"
+
+if not os.path.exists(models_dir):
+	os.makedirs(models_dir)
+
+if not os.path.exists(logdir):
+	os.makedirs(logdir)
+
 env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[250, 250])
 
+# %%
+from stable_baselines3.common.env_checker import check_env
+check_env(env)
+
+# %%
+agent = PPO('MlpPolicy', env, verbose=1, n_steps=2, batch_size=2, n_epochs=1)
+TIMESTEPS = 1
+agent.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False)
+
+# %%
+iters = 0
+while iters <= 2:
+     iters += 1
+     print(f'iteration: {iters}')
+     agent.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name=f'PPO')
+     agent.save(f"{models_dir}/{TIMESTEPS*iters}")
 
 
-
+# %%
+# Move around a bit
+obs, reward, done, info = env.step(torch.tensor([130, 220]))
+obs, reward, done, info = env.step(torch.tensor([140, 100]))
+obs, reward, done, info = env.step(torch.tensor([150, 220]))
+obs, reward, done, info = env.step(torch.tensor([160, 120]))
 
 
 # %%

@@ -2,13 +2,15 @@ import gpytorch.constraints
 import torch
 import gpytorch
 import numpy as np
-import gym
+import gymnasium as gym
+from gymnasium import spaces
 import random
 import matplotlib.pyplot as plt
 
 from gpt_class_exactgpmodel import ExactGPModel
 import path
 import chem_utils
+import gpt_utils
 
 # %%
 # Definitions
@@ -16,7 +18,7 @@ import chem_utils
 # %%
 class GasSurveyEnv(gym.Env):
     def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100]):
-        super().__init__()
+        super(GasSurveyEnv, self).__init__()
 
         self.scenario_bank = scenario_bank
         self.min_concentration, self.max_concentration = self.scenario_bank.get_minmax()
@@ -27,27 +29,28 @@ class GasSurveyEnv(gym.Env):
         self.gp_pred_resolution = gp_pred_resolution
 
         self.n_episodes = 0
+        self.n_steps_max = 10
         
         # μ, σ, visited, coord‑Y, coord‑X  → 5 possible channels
         # Could instead of 'visited' include location channels
         # Including coord_x/y channels is a bit dangerous, should
         # randomize direction of scenarios, e.g. rotate by 90/180 deg
         # to avoid 'learning the coordinate system'
-        self.channels = np.array([1, 1, 1, 0, 0])
+        self.channels = np.array([0, 1, 1, 0, 0])
 
         # reset draws a random scenario, initializes GP model and sample memory
         self.reset()
     
-        self.observation_space = gym.spaces.Box(
+        self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(self.channels.sum(), self.obs_x, self.obs_y), dtype=np.float32
         )
 
          # Action space is a float anywhere inside this box:
-        self.action_space = gym.spaces.Box(low=np.array([self.env_xy[:, 0].min(), self.env_xy[:, 1].min()]),
+        self.action_space = spaces.Box(low=np.array([self.env_xy[:, 0].min(), self.env_xy[:, 1].min()]),
                                 high=np.array([self.env_x_max, self.env_y_max]),
                                 dtype=np.float32)
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
         # Draw a random scenario/snapshot
         random_env = self.scenario_bank.sample()
         self.env_xy = random_env['coords']
@@ -61,6 +64,7 @@ class GasSurveyEnv(gym.Env):
 
         self.n_steps = 0
         self.n_episodes += 1
+        self.done = False
 
         # Init observation channels
         self._create_obs_coords()
@@ -109,19 +113,32 @@ class GasSurveyEnv(gym.Env):
         return obs, info
 
     def step(self, action, speed=1.0, sample_freq=1.0):
+
         self.n_steps += 1
         # action = absolute (x,y) or Δx,Δy; clip, update GP, rewards...
         start_time = '2020-01-01T02:10:00.000000000' # dummy time
         synoptic = True
         old_loc_y, old_loc_x = np.argwhere(self.location)[0]
-        old_loc = torch.tensor([old_loc_x, old_loc_y])
+        old_loc = torch.tensor([int(old_loc_x), int(old_loc_y)], dtype=torch.int)
         old_var = self.pred_var_norm
+        print(f'action: {action}')
 
         # expects action to be a pair of locs within [0, 255]
-        new_loc = action
+        out_of_bounds = not self.action_space.contains(action)
+        if out_of_bounds:
+            action = np.clip(action, self.action_space.low, self.action_space.high)
+
+        new_loc = torch.tensor(np.round(action), dtype=torch.int)
 
         old_loc = self._append_z_to_xy(old_loc)
         new_loc = self._append_z_to_xy(new_loc)
+
+        print(f'{old_loc}, {new_loc}')
+
+        if torch.equal(old_loc, new_loc):
+            obs, self.done, info = self._get_obs_done_info()
+            reward = -1.0
+            return obs, float(reward), self.done, False, info
 
         sample_coords = path.path([old_loc, new_loc], start_time, speed, sample_freq, synoptic)
         # Extract the first two elements of each tuple and convert to a torch tensor
@@ -133,13 +150,13 @@ class GasSurveyEnv(gym.Env):
         
         for c, coord in enumerate(sample_coords_xy):
             measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self._coords_flat[:, 0], self._coords_flat[:, 1], self.values_norm_zscale, coord.numpy(), radius)
-            print(f'{coord} - {measurements[c]}')
+            #print(f'{coord} - {measurements[c]}')
         
         self.sampled_coords = torch.cat((self.sampled_coords, sample_coords_xy))
         self.sampled_coords_norm = torch.cat((self.sampled_coords_norm, sample_coords_norm))
         self.sampled_vals = torch.cat((self.sampled_vals, measurements))
 
-        self.estimate() # fill self.pred_mu self.pred_var and normalized equivalents
+        self._estimate() # fill self.pred_mu self.pred_var and normalized equivalents
         
         # Update location
         self.location[old_loc[1], old_loc[0]] = 0.0
@@ -148,18 +165,32 @@ class GasSurveyEnv(gym.Env):
         # compute reward (based on decrease in overall variance)
         reward = (old_var - self.pred_var_norm).sum()
 
-        obs  = self._render_layers()
-        done = (self.n_steps >= 25)
-        info = {}
+        # punish for out of bounds
+        reward -= 1.0
 
-        return obs, reward, done, info
+        obs, truncated, info = self._get_obs_done_info()
+
+        return obs, float(reward), False, truncated, info
     
-    def estimate(self):
+    def render():
+        pass
+
+    def close():
+        pass
+    
+    def _get_obs_done_info(self):
+        obs  = self._render_layers()
+        truncated = (self.n_steps >= self.n_steps_max)
+        info = {}
+        return obs, truncated, info
+
+    def _estimate(self):
         if self.mdl is None:
             self.mdl = ExactGPModel(self.sampled_coords_norm, self.sampled_vals, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const)
         
         self.mdl.set_train_data(self.sampled_coords_norm, self.sampled_vals, strict=False)
         
+
         # Then predict
         self.mdl.eval()
         self.mdl.likelihood.eval()
@@ -252,7 +283,7 @@ class GasSurveyEnv(gym.Env):
         
         return tensor.reshape(self.obs_y, self.obs_x)
     
-    def print_info(self):
+    def _print_info(self):
         print(f'Currently loaded env: {self.parameter} ({self.depth} {self.time})')
     
     def _downsample(self, radius=1.0):
@@ -266,7 +297,7 @@ class GasSurveyEnv(gym.Env):
     
     def _append_z_to_xy(self, xy):
         if len(xy) == 2:
-            return torch.cat((xy, torch.tensor([self.depth])))
+            return torch.cat((xy, torch.tensor([self.depth], dtype=torch.int)))
         else:
             return xy
 
@@ -281,8 +312,8 @@ class GasSurveyEnv(gym.Env):
 
         fig, ax = plt.subplots(figsize=(8, 6))
         scatter = ax.scatter(x, y, c=c, cmap='coolwarm', s=1, vmin=c.min(), vmax=c.max())
-        if path:
-            ax.scatter(path[:, 0], path[:, 1], c='black', s=2)
+        if path is not None:
+            ax.scatter(path[:, 0], path[:, 1], c='black', s=1)
         
         ax.set_xlim(x_range[0], x_range[1])
         ax.set_ylim(y_range[0], y_range[1])

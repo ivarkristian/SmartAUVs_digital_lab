@@ -4,8 +4,11 @@ import torch
 import os
 import random
 import numpy as np
-
+from pathlib import Path
+from typing import List, Dict, Any
 import chem_utils
+
+Record = Dict[str, Any]
 
 # %%
 # Disable LaTeX rendering to avoid the need for an external LaTeX installation
@@ -34,6 +37,7 @@ class ScenarioBank:
     def print_data_files(self):
         print(f'Directory {self.data_dir} containts these files of type .nc:\n{self.nc_files}')
         print(f'Run .load_dataset(nc_file) to load a file as a dataset')
+        #print(f'Use .convert_files_to_tensors() to save datasets as tensors for RL')
 
     def load_dataset(self, nc_file=None):
         if isinstance(nc_file, int):
@@ -62,25 +66,105 @@ class ScenarioBank:
         x = x_dataset - x_dataset.min()
         y = y_dataset - y_dataset.min()
         env_xy = torch.tensor(np.column_stack((x, y)), dtype=torch.float32)
-        metadata = {'parameter': parameter, 'depth': depth, 'time': time, 'data_file': self.data_file}
+
+        # add mean current strength and direction
+        u = self.dataset['u'].isel(time=time, siglay=depth)
+        v = self.dataset['v'].isel(time=time, siglay=depth)
+        u = u.values[:72710]
+        v = v.values[:72710]
+        cur_dir = np.atan2(v.mean(), u.mean())/np.pi*180.0
+        cur_str = np.sqrt(u.mean()**2 + v.mean()**2)
+
+        metadata = {'parameter': parameter, 'depth': depth, 'time': time, 'cur_dir': cur_dir, 'cur_str': cur_str, 'data_file': self.data_file}
 
         return env_xy, torch.tensor(values), metadata
     
     def add_env(self, parameter='pH', depth=67, time=1):
         env_xy, values, metadata = self.get_env(parameter, depth, time)
-        self.environments.append({'coords': env_xy, 'values': values, 'parameter': metadata['parameter'], 'depth': metadata['depth'], 'time': metadata['time']})
+        self.environments.append({'coords': env_xy, 'values': values, 'parameter': metadata['parameter'], 'depth': metadata['depth'], 'time': metadata['time'], 'cur_dir': metadata['cur_dir'], 'cur_str': metadata['cur_str']})
         print(f"Loaded environment: {parameter} (depth={depth}, time={time})")
         
     def print_info(self):
         print(f'Current directory: {self.data_dir}')
         print(f'Data file: {self.data_file}')
         print(f'Loaded dataset: {self.dataset}')
-        self.print_env_info()
+        self.print_envs_info()
     
     def print_envs_info(self):
         print(f"Loaded environments:")
         for env in self.environments:
             print(f"{env['parameter']} (depth={env['depth']}, time={env['time']})")
+    
+    def add_all_envs_in_data_dir(self, parameter, depth_range, time_range):
+
+        for file in self.nc_files:
+            self.load_dataset(nc_file=file)
+            for time in range(time_range[0], time_range[1]+1):
+                for depth in range(depth_range[0], depth_range[1]):
+                    self.add_env(parameter, depth, time)
+
+        return
+        
+    def downsample_all_envs(self, coords_flat, radius=1.0):
+        for i in range(len(self.environments)):
+            self.downsample_env(i, coords_flat, radius)
+
+    def downsample_env(self, env_num, coords_flat, radius=1.0):
+        # Radius of sample averaging
+        downsampled = torch.zeros(len(coords_flat), dtype=torch.float32)
+        env = self.environments[env_num]
+        
+        for c, coord in enumerate(coords_flat):
+            downsampled[c] = chem_utils.extract_synoptic_chemical_data_from_depth(env['coords'][:, 0], env['coords'][:, 1], env['values'], coord.numpy(), radius)
+        
+        self.environments[env_num]['coords'] = coords_flat
+        self.environments[env_num]['values'] = downsampled
+        
+        return
+
+    def save_envs(self, environments: List[Record], file_path: str | Path) -> None:
+        """
+        Save a list of dicts (tensors, strings, etc.) to disk with torch.save.
+
+        Parameters
+        ----------
+        records   : list of dictionaries, each having keys
+                    ["coords", "values", "parameter", "depth", "time"].
+        file_path : destination file (.pt or .pkl extension recommended).
+        """
+
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Move tensors to CPU so the file is device-agnostic
+        safe_records: List[Record] = []
+        for rec in environments:
+            new_rec: Record = {}
+            for k, v in rec.items():
+                if torch.is_tensor(v):
+                    new_rec[k] = v.detach().cpu()
+                else:
+                    new_rec[k] = v
+            safe_records.append(new_rec)
+
+        torch.save(safe_records, file_path)
+        print(f'Saved {len(self.environments)} environments to {file_path}')
+    
+        return
+    
+    def load_envs(self, file_path: str | Path, device: str | torch.device = "cpu") -> List[Record]:
+        """
+        Load the list back into memory.
+
+        Parameters
+        ----------
+        file_path : path produced by `save_records`.
+        device    : "cpu", "cuda", or torch.device; tensors will be mapped here.
+        """
+        self.environments: List[Record] = torch.load(file_path, map_location=device)
+        print(f'Loaded {len(self.environments)} environments from {file_path}')
+
+        return
 
     def plot_env(self, env_num=0, title_postfix=None, path=None):
         if len(self.environments) <= env_num:
