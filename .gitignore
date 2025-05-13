@@ -2,3 +2,7 @@ __pycache__/
 .DS_Store
 auv_path.gif
 figures/
+logs/
+models/
+tensor_envs/
+*.nn
