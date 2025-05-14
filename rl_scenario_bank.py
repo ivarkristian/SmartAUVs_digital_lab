@@ -19,7 +19,7 @@ plt.rcParams.update({
     "mathtext.fontset": "dejavuserif"  # Use DejaVu Serif font for mathtext, similar to LaTeX fonts
 })
 
-# Step 1: Define the environment wrapper
+# Define the Scenario Bank class
 class ScenarioBank:
     def __init__(self, data_dir = '../scenario_1c_medium/'):
         self.data_dir = data_dir
@@ -82,7 +82,7 @@ class ScenarioBank:
     def add_env(self, parameter='pH', depth=67, time=1):
         env_xy, values, metadata = self.get_env(parameter, depth, time)
         self.environments.append({'coords': env_xy, 'values': values, 'parameter': metadata['parameter'], 'depth': metadata['depth'], 'time': metadata['time'], 'cur_dir': metadata['cur_dir'], 'cur_str': metadata['cur_str']})
-        print(f"Loaded environment: {parameter} (depth={depth}, time={time})")
+        print(f"Loaded environment: {parameter}, depth={depth}, time={time} ({self.data_file})")
         
     def print_info(self):
         print(f'Current directory: {self.data_dir}')
@@ -99,26 +99,31 @@ class ScenarioBank:
 
         for file in self.nc_files:
             self.load_dataset(nc_file=file)
-            for time in range(time_range[0], time_range[1]+1):
+            for time in range(time_range[0], time_range[1]):
                 for depth in range(depth_range[0], depth_range[1]):
-                    self.add_env(parameter, depth, time)
+                    if time > 0 or file != self.nc_files[0]:
+                        self.add_env(parameter, depth, time)
 
         return
-        
-    def downsample_all_envs(self, coords_flat, radius=1.0):
-        for i in range(len(self.environments)):
-            self.downsample_env(i, coords_flat, radius)
 
-    def downsample_env(self, env_num, coords_flat, radius=1.0):
+    def downsample_all_envs(self, radius=1.0, method='mean'):
+
+        for i in range(len(self.environments)):
+            self.downsample_env(i, radius, method)
+
+    def downsample_env(self, env_num, radius=1.0, method='mean'):
+
         # Radius of sample averaging
-        downsampled = torch.zeros(len(coords_flat), dtype=torch.float32)
+        downsampled = torch.zeros(len(self.coords_flat), dtype=torch.float32)
         env = self.environments[env_num]
         
-        for c, coord in enumerate(coords_flat):
-            downsampled[c] = chem_utils.extract_synoptic_chemical_data_from_depth(env['coords'][:, 0], env['coords'][:, 1], env['values'], coord.numpy(), radius)
+        for c, coord in enumerate(self.coords_flat):
+            downsampled[c] = chem_utils.extract_synoptic_chemical_data_from_depth(env['coords'][:, 0], env['coords'][:, 1], env['values'], coord.numpy(), radius, method)
         
-        self.environments[env_num]['coords'] = coords_flat
+        self.environments[env_num]['coords'] = self.coords_flat
         self.environments[env_num]['values'] = downsampled
+
+        print(f"Downsampled env {env_num} ({env['parameter']} time: {env['time']} depth: {env['depth']})")
         
         return
 
@@ -202,7 +207,7 @@ class ScenarioBank:
         
         return mins.min(), maxes.max()
     
-    def get_mu_sigma2(self):
+    def get_mu_sigma2(self, biased=True):
         ns = torch.zeros(len(self.environments))
         mus = torch.zeros(len(self.environments))
         sigma2s = torch.zeros(len(self.environments))
@@ -213,8 +218,50 @@ class ScenarioBank:
         
         N = ns.sum()
         mu_all = (ns * mus).sum() / N
-        ss = ns * (sigma2s + mus**2)
-        sigma2_all = ss.sum() / N - mu_all**2
+        
+        if biased:
+            ss = ns * (sigma2s + mus**2)
+            sigma2_all = ss.sum() / N - mu_all**2
+        else:
+            within  = ((ns - 1) * sigma2s).sum()
+            between = (ns * (mus - mu_all) ** 2).sum()
+            sigma2_all = (within + between) / (N - 1)
 
         return mu_all, sigma2_all
     
+    def create_obs_coords(self, resolution):
+        
+        # Downsampling based on given pred_resolution
+        obs_x, obs_y = resolution
+        env_x_max = self.environments[-1]['coords'][:, 0].max()
+        env_y_max = self.environments[-1]['coords'][:, 1].max()
+
+        # -- 1. grid of query points -----------------
+        #   (H*W, 2) tensor that GPyTorch will accept.
+        xs = np.linspace(0, env_x_max, obs_x, dtype=np.float32)
+        ys = np.linspace(0, env_y_max, obs_y, dtype=np.float32)
+        gx, gy = np.meshgrid(xs, ys)                        # shape (H, W)
+
+        # Save as 2‑D field for coord‑channels and as flat list for GP queries
+        coords = np.stack([gx, gy], axis=-1)      # (H, W, 2)
+        self.coords_flat = torch.from_numpy(coords.reshape(-1, 2))
+
+if __name__ == '__main__':
+    # Initialize bank object
+    bank = ScenarioBank(data_dir='../my_data_dir/')
+
+    # Load scenarios from netCDF files
+    depth_range = [67, 70]
+    time_range = [0, 12]
+    bank.add_all_envs_in_data_dir('pCO2', depth_range, time_range)
+
+    # Define downsampling resolution
+    bank.create_obs_coords([250, 250])
+    bank.downsample_all_envs()
+
+    # Save to file
+    bank.save_envs(bank.environments, 'tensor_envs/my_file.pt')
+
+    # Load from file
+    bank.load_envs('tensor_envs/my_file.pt')
+

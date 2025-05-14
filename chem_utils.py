@@ -36,7 +36,7 @@ def load_chemical_dataset(chem_data_path):
 
     return chem_dataset
 
-def extract_synoptic_chemical_data_from_depth(x_coords, y_coords, values, sample_coords, radius=1.0):
+def extract_synoptic_chemical_data_from_depth(x_coords, y_coords, values, sample_coords, radius=1.0, method='mean'):
     """
     Extracts chemical data within a specified spherical volume and computes the average data value.
 
@@ -84,8 +84,14 @@ def extract_synoptic_chemical_data_from_depth(x_coords, y_coords, values, sample
     data_within_radius = values[unique_indices_within_radius]
     #print(f'data_within_radius: {(data_within_radius)}')
 
-    # Compute the average data value
-    average_data_value = data_within_radius.mean()
+    if method == 'mean':
+        # Compute the average data value
+        average_data_value = data_within_radius.mean()
+    elif method == 'max':
+        average_data_value = data_within_radius.max()
+    else:
+        print(f'Method {method} not recognized.')
+        average_data_value = 0
 
     return average_data_value
 

@@ -25,18 +25,10 @@ importlib.reload(chem_utils)
 # %%
 bank = rl_scenario_bank.ScenarioBank()
 
-data_dir = '../scenario_1c_medium/'
-data_file = 'SMART-AUVs_OF-June-1c-0003.nc'
-param = 'pCO2'
-depth = 67
-time = 4
-
-# %%
-bank.load_dataset(data_file)
-
-bank.add_env('pCO2', 67, 1)
-bank.add_env('pCO2', 67, 2)
-bank.add_env('pCO2', 67, 3)
+envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+bank.load_envs(envs_file)
+#bank.environments = bank.environments[0:5]
+#bank.print_envs_info()
 
 # %%
 models_dir = f"models/{int(time.time())}/"
@@ -48,14 +40,15 @@ if not os.path.exists(models_dir):
 if not os.path.exists(logdir):
 	os.makedirs(logdir)
 
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[250, 250])
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[250, 250], timer=True)
 
 # %%
 from stable_baselines3.common.env_checker import check_env
 check_env(env)
 
 # %%
-agent = PPO('MlpPolicy', env, verbose=1, n_steps=2, batch_size=2, n_epochs=1)
+#agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
+agent = PPO('MlpPolicy', env, verbose=1)
 TIMESTEPS = 1
 agent.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False)
 
