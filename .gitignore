@@ -5,4 +5,5 @@ figures/
 logs/
 models/
 tensor_envs/
+.venv/
 *.nn
