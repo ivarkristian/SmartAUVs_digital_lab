@@ -166,7 +166,7 @@ class ScenarioBank:
         file_path : path produced by `save_records`.
         device    : "cpu", "cuda", or torch.device; tensors will be mapped here.
         """
-        self.environments: List[Record] = torch.load(file_path, map_location=device)
+        self.environments: List[Record] = torch.load(file_path, map_location=device, weights_only=False)
         print(f'Loaded {len(self.environments)} environments from {file_path}')
 
         return

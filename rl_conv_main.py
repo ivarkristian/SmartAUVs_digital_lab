@@ -7,10 +7,13 @@
 
 
 # %%
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 import importlib
 import torch
 from stable_baselines3 import PPO
-import os
+
 import time
 import rl_scenario_bank
 import rl_gas_survey_env

@@ -7,6 +7,7 @@ from gymnasium import spaces
 import random
 import matplotlib.pyplot as plt
 import time
+from typing import Tuple, List
 
 from gpt_class_exactgpmodel import ExactGPModel
 import path
@@ -22,7 +23,13 @@ class GasSurveyEnv(gym.Env):
         self.debug = debug
         self.timer = timer
         self.a_var, self.a_dist = r_weights
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
 
         # Load scenario bank
         self.scenario_bank = scenario_bank
@@ -90,7 +97,7 @@ class GasSurveyEnv(gym.Env):
 
         self.env_x_max = float(self.env_xy[:, 0].max())
         self.env_y_max = float(self.env_xy[:, 1].max())
-        
+        self.maxdist=((self.env_x_max**2 + self.env_y_max**2)**0.5)
         #self.done = False
 
         # Init observation channels
@@ -112,7 +119,7 @@ class GasSurveyEnv(gym.Env):
             empty_x,
             empty_y,
             self.llh,
-            kernel_type=self.kernel_type,
+            type=self.kernel_type,
             lengthscale_constraint=self.ls_const,
         ).to(self.device)
         self.mdl.covar_module.outputscale = self.sigma2_all
@@ -194,28 +201,28 @@ class GasSurveyEnv(gym.Env):
             return obs, float(reward), False, truncated, info
 
         t = time.process_time()
-        sample_coords = path.path([self.old_loc, new_loc], start_time, speed, sample_freq, synoptic)
+        sample_coords = path.path([self.old_loc.cpu(), new_loc.cpu()], start_time, speed, sample_freq, synoptic)
         # Extract the first two elements of each tuple and convert to a torch tensor
         # Continue GPT checkings here!
-        sample_coords_xy = torch.tensor([(float(t[0]), float(t[1])) for t in sample_coords])
+        sample_coords_xy = torch.tensor([(float(t[0]), float(t[1])) for t in sample_coords], device=self.device)
         #sample_coords_norm = sample_coords_xy / torch.tensor([self.env_x_max, self.env_y_max])
         if self.timer:
             print(f't1 step: {time.process_time()-t}')
         
-        measurements = torch.zeros(len(sample_coords_xy), dtype=torch.float32)
+        measurements = np.zeros(len(sample_coords_xy), dtype=np.float32)
         radius = 1.0 # Radius of sample averaging
         
         t = time.process_time()
         # Sampling from the z-scaled values
         for c, coord in enumerate(sample_coords_xy):
-            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.env_xy[:, 0], self.env_xy[:, 1], self.values, coord.numpy(), radius)
+            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.env_xy[:, 0].cpu().numpy(), self.env_xy[:, 1].cpu().numpy(), self.values.cpu().numpy(), coord.cpu().numpy(), radius)
             #print(f'{coord} - {measurements[c]}')
         if self.timer:
             print(f't2 step: {time.process_time()-t}')
         
         self.sampled_coords = torch.cat((self.sampled_coords, sample_coords_xy))
         #self.sampled_coords_norm = torch.cat((self.sampled_coords_norm, sample_coords_norm))
-        self.sampled_vals = torch.cat((self.sampled_vals, measurements))
+        self.sampled_vals = torch.cat((self.sampled_vals, torch.tensor(measurements, device=self.device)))
 
         t = time.process_time()
         self._estimate() # fill self.pred_mu self.pred_var and normalized equivalents
@@ -231,7 +238,7 @@ class GasSurveyEnv(gym.Env):
         
         # compute reward (based on decrease in overall variance)
         r_var = (old_var - self.pred_var).mean()
-        r_dist = -len(sample_coords_xy)/((self.env_x_max**2 + self.env_y_max**2)**0.5)
+        r_dist = -len(sample_coords_xy)/self.maxdist
 
         reward += self.a_var*r_var + self.a_dist*r_dist
 
@@ -251,14 +258,10 @@ class GasSurveyEnv(gym.Env):
     def close():
         pass
     
-    def loc_to_ind(self, loc):
-        ind_x = round(loc[0]/self.obs_x_len)
-        ind_y = round(loc[1]/self.obs_y_len)
-        if ind_x >= self.obs_x:
-            ind_x -= 1
-        if ind_y >= self.obs_y:
-            ind_y -= 1
-        return ind_x, ind_y
+    def loc_to_ind(self, loc: Tuple[float, float]) -> Tuple[int, int]:
+        x_idx = min(int(round(loc[0] / (self.env_x_max / self.obs_x))), self.obs_x - 1)
+        y_idx = min(int(round(loc[1] / (self.env_y_max / self.obs_y))), self.obs_y - 1)
+        return x_idx, y_idx
 
     def _get_obs_truncated_info(self):
         obs  = self._render_layers()
@@ -270,17 +273,15 @@ class GasSurveyEnv(gym.Env):
         if self.mdl is None:
             self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals-self.mu_all, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const)
         
-        self.mdl.set_train_data(self.sampled_coords, self.sampled_vals-self.mu_all, strict=False)
+        self.mdl.set_train_data(
+            inputs=self.sampled_coords, targets=self.sampled_vals-self.mu_all, strict=False)
         
         # Then predict
-        self.mdl.eval()
-        self.mdl.likelihood.eval()
-
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             #current_pred = self.mdl.likelihood(self.mdl(self._coords_flat)) # just adds uncertainty
             current_pred = self.mdl(self._coords_flat)
     
-        self.pred_mu = self._tensor_to_obs_channel(current_pred.mean) + self.mu_all
+        self.pred_mu = self._tensor_to_obs_channel(current_pred.mean + self.mu_all)
         self.pred_var = self._tensor_to_obs_channel(current_pred.variance)
 
         # Scale to 0-255 ([min_conc, max_conc] from scenario bank)
@@ -336,13 +337,10 @@ class GasSurveyEnv(gym.Env):
         return stacked
     
     def _ensure_normalization(self):
-        self.pred_mu_norm_clipped = np.clip(self._tensor_to_obs_channel(self.pred_mu_norm), 0, 255)
-        self.pred_var_norm_clipped = np.clip(self._tensor_to_obs_channel(self.pred_var_norm), 0, 255)
+        self.pred_mu_norm_clipped = np.clip(self.pred_mu_norm, 0, 255).astype(np.uint8)
+        self.pred_var_norm_clipped = np.clip(self.pred_var_norm, 0, 255).astype(np.uint8)
     
     def _create_obs_coords(self):
-        
-        # Downsampling based on given pred_resolution
-        self.obs_x, self.obs_y = self.gp_pred_resolution
 
         # -- 1. grid of query points -----------------
         #   (H*W, 2) tensor that GPyTorch will accept.
@@ -353,23 +351,35 @@ class GasSurveyEnv(gym.Env):
         # Save as 2‑D field for coord‑channels and as flat list for GP queries
         self._coord_x = gx           # (H, W)
         self._coord_y = gy           # (H, W)
-        self._coords = np.stack([gx, gy], axis=-1)      # (H, W, 2)
-        self._coords_flat = torch.from_numpy(
-                self._coords.reshape(-1, 2)             # (H*W, 2)
-        )
+        self._coords = np.stack([gx, gy], axis=-1).reshape(-1, 2)      # (H, W, 2)
+        self._coords_flat = torch.as_tensor(self._coords, device=self.device)
         
         # -- 2. static coordinate channels, normalised [0, 1] --
-        self.coords_flat_norm = self._coords_flat/torch.tensor([self.env_x_max, self.env_y_max])
+        #self.coords_flat_norm = self._coords_flat/torch.tensor([self.env_x_max, self.env_y_max])
         self.coord_x_norm = (gx / xs.max())  # (H, W)
         self.coord_y_norm = (gy / ys.max())  # (H, W)
 
         return
     
-    def _tensor_to_obs_channel(self, tensor):
-        if isinstance(tensor, torch.Tensor):
-            return tensor.view(self.obs_y, self.obs_x).cpu().numpy()
-        
-        return tensor.reshape(self.obs_y, self.obs_x)
+    def _tensor_to_obs_channel(self, t: torch.Tensor) -> np.ndarray:
+        if not isinstance(t, torch.Tensor):
+            raise TypeError(f"Expected a torch.Tensor, got {type(t)}")
+
+        # Ensure tensor is flat with expected size
+        expected_size = self.obs_x * self.obs_y
+        if t.numel() != expected_size:
+            raise ValueError(f"Tensor has {t.numel()} elements, expected {expected_size}")
+
+        return t.view(self.obs_y, self.obs_x).detach().cpu().numpy()
+
+    #def _tensor_to_obs_channel(self, t: torch.Tensor) -> np.ndarray:
+    #    return t.view(self.obs_y, self.obs_x).cpu().numpy()
+    
+    #def _tensor_to_obs_channel(self, tensor):
+    #    if isinstance(tensor, torch.Tensor):
+    #        return tensor.view(self.obs_y, self.obs_x).cpu().numpy()
+    #    
+    #    return tensor.reshape(self.obs_y, self.obs_x)
     
     def _print_info(self):
         print(f'Currently loaded env: {self.parameter} ({self.depth} {self.time})')
