@@ -25,9 +25,9 @@ class GasSurveyEnv(gym.Env):
         self.timer = timer
         self.a_var, self.a_dist = r_weights
         # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
-        if torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-        elif torch.cuda.is_available():
+        #if torch.backends.mps.is_available():
+        #    self.device = torch.device("mps")
+        if torch.cuda.is_available():
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
@@ -74,7 +74,7 @@ class GasSurveyEnv(gym.Env):
         self.n_episodes += 1
         self.n_steps = 0
 
-        if self.debug and (self.n_episodes % 100 == 0):
+        if self.debug and (self.n_episodes % 10 == 0):
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.n_episodes):.3}')
 
         # Draw a random scenario/snapshot
@@ -245,7 +245,10 @@ class GasSurveyEnv(gym.Env):
         self.location[ind_y][ind_x] = 255
         
         # compute reward (based on decrease in overall variance)
-        r_var = (old_var - self.pred_var).mean()
+        var_red = (old_var - self.pred_var).sum()
+        #r_var = 1 + 10*var_red.mean()/old_var.mean()
+        
+        r_var = 2*var_red/(float(self.mdl.get_lengthscale())*len(sample_coords_xy)*old_var.mean())
         r_dist = -len(sample_coords_xy)/self.maxdist
 
         reward += self.a_var*r_var + self.a_dist*r_dist
