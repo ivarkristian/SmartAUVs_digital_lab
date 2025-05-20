@@ -1,3 +1,4 @@
+from memory_profiler import profile
 import gpytorch.constraints
 import torch
 import gpytorch
@@ -75,6 +76,7 @@ class GasSurveyEnv(gym.Env):
         # Sampling is done along the computed locations, which do not necessarily adhere to the 
         # [obs_x, obs_y] raster. Prediction is done with the [obs_x, obs_y] raster.
 
+    @profile
     def reset(self, seed=None, options=None):
         t = time.process_time()
         self.n_episodes += 1
@@ -162,6 +164,7 @@ class GasSurveyEnv(gym.Env):
 
         return obs, info
 
+    @profile
     def step(self, action, speed=1.0, sample_freq=1.0):
         tt = time.process_time()
         t = time.process_time()

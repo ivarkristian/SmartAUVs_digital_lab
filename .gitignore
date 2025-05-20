@@ -6,4 +6,5 @@ logs/
 models/
 tensor_envs/
 .venv/
+.vscode/
 *.nn

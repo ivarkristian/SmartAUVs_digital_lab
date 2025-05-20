@@ -7,6 +7,7 @@
 
 
 # %%
+from memory_profiler import profile
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
@@ -26,7 +27,7 @@ importlib.reload(rl_scenario_bank)
 importlib.reload(chem_utils)
 
 # %%
-bank = rl_scenario_bank.ScenarioBank()
+bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
 envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
 bank.load_envs(envs_file)
@@ -43,21 +44,19 @@ if not os.path.exists(models_dir):
 if not os.path.exists(logdir):
 	os.makedirs(logdir)
 
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], timer=True, debug=True)
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], timer=False, debug=False)
 
-# %%
-from stable_baselines3.common.env_checker import check_env
-check_env(env)
-
-# %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
 agent = PPO('MlpPolicy', env, verbose=1, tensorboard_log=logdir)
-TIMESTEPS = 1
+TIMESTEPS = 1000
 
 while True:
     agent.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name=f'PPO')
     agent.save(f"{models_dir}/{env.n_episodes}")
 
+# %%
+from stable_baselines3.common.env_checker import check_env
+check_env(env)
 
 # %%
 # Move around a bit
