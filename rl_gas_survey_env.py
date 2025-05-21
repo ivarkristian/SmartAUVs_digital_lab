@@ -73,6 +73,7 @@ class GasSurveyEnv(gym.Env):
         t = time.process_time()
         self.n_episodes += 1
         self.n_steps = 0
+        self.terminated = False
 
         if self.debug and (self.n_episodes % 10 == 0):
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.n_episodes):.3}')
@@ -200,9 +201,9 @@ class GasSurveyEnv(gym.Env):
 
         if torch.allclose(self.old_loc, new_loc):
             obs, truncated, info = self._get_obs_truncated_info()
-            reward += -1.0
+            reward += -5.0
             self.acc_reward += reward
-            return obs, float(reward), False, truncated, info
+            return obs, float(reward), self.terminated, truncated, info
 
         t = time.process_time()
         sample_coords = path.path([self.old_loc.cpu(), new_loc.cpu()], start_time, speed, sample_freq, synoptic)
@@ -247,11 +248,16 @@ class GasSurveyEnv(gym.Env):
         # compute reward (based on decrease in overall variance)
         var_red = (old_var - self.pred_var).sum()
         #r_var = 1 + 10*var_red.mean()/old_var.mean()
-        
-        r_var = 2*var_red/(float(self.mdl.get_lengthscale())*len(sample_coords_xy)*old_var.mean())
+        r_var = var_red
+        #r_var = 2*var_red/(float(self.mdl.get_lengthscale())*len(sample_coords_xy)*old_var.mean())
         r_dist = -len(sample_coords_xy)/self.maxdist
+        r_term = 0
 
-        reward += self.a_var*r_var + self.a_dist*r_dist
+        if self.pred_var.mean() <= 500:
+            r_term = self.pred_var.mean()/self.n_steps
+            self.terminated = True
+
+        reward += self.a_var*r_var + self.a_dist*r_dist + r_term
 
         obs, truncated, info = self._get_obs_truncated_info()
         self.acc_reward += reward
@@ -261,7 +267,7 @@ class GasSurveyEnv(gym.Env):
         if self.debug:
             print(f'r_var: {r_var}, r_dist: {r_dist}, r_tot: {reward}')
         
-        return obs, float(reward), False, truncated, info
+        return obs, float(reward), self.terminated, truncated, info
     
     def render():
         pass
