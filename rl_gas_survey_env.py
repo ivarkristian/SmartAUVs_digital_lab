@@ -99,6 +99,7 @@ class GasSurveyEnv(gym.Env):
 
         # Init observation channels
         self._create_obs_coords()
+        #self._get_cached_grid(self.env_x_max, self.env_y_max)
 
         self.pred_mu_norm = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
         self.pred_mu_norm_clipped = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
@@ -163,6 +164,9 @@ class GasSurveyEnv(gym.Env):
         self.pred_mu = np.zeros((self.obs_y, self.obs_x), dtype=np.float32)
         self.pred_var = np.full_like(self.pred_mu, self.sigma2_all)
         
+        if self.debug:
+            self._assert_gpu_consistency()
+
         obs = self._render_layers()
         info = {}
         
@@ -266,7 +270,8 @@ class GasSurveyEnv(gym.Env):
             print(f'step took: {time.process_time()-tt}')
         if self.debug:
             print(f'r_var: {r_var}, r_dist: {r_dist}, r_tot: {reward}')
-        
+            self._assert_gpu_consistency()
+
         return obs, float(reward), self.terminated, truncated, info
     
     def render():
@@ -285,6 +290,33 @@ class GasSurveyEnv(gym.Env):
         truncated = (self.n_steps >= self.n_steps_max)
         info = {}
         return obs, truncated, info
+
+    def _assert_gpu_consistency(self):
+
+        for p in self.mdl.parameters():
+            if str(p.device.type) != str(self.device):
+                print(f'p.device.type: {p.device.type}, self.device: {self.device}')
+                print(f'{p} - {p.device}')
+        
+        for t in self.mdl.train_inputs + (self.mdl.train_targets,):
+            if str(t.device.type) != str(self.device):
+                print(f'{t} - {t.device}')
+        
+        for p in self.llh.parameters():
+            if str(p.device.type) != str(self.device):
+                print(f'{p} - {p.device}')
+
+        # 1. parameters
+        assert all(str(p.device.type) == str(self.device) for p in self.mdl.parameters()), \
+            "Some model parameters are not on the target device"
+
+        # 2. training data
+        for t in self.mdl.train_inputs + (self.mdl.train_targets,):
+            assert str(t.device.type) == str(self.device), "GP training tensor on wrong device"
+
+        # 3. likelihood parameters
+        assert all(str(p.device.type) == str(self.device) for p in self.llh.parameters()), \
+            "Likelihood parameters not on target device"
 
     #@profile
     def _estimate(self):
@@ -357,6 +389,17 @@ class GasSurveyEnv(gym.Env):
         self.pred_mu_norm_clipped = np.clip(self.pred_mu_norm, 0, 255).astype(np.uint8)
         self.pred_var_norm_clipped = np.clip(self.pred_var_norm, 0, 255).astype(np.uint8)
     
+    def _get_cached_grid(self, x_max: float, y_max: float) -> torch.Tensor:
+        """Return (H*W,2) tensor on self.device; cache between envs."""
+        key = (x_max, y_max, self.obs_x, self.obs_y, self.device.type)
+        if key not in GasSurveyEnv._grid_cache:
+            xs = torch.linspace(0, x_max, self.obs_x, device=self.device)
+            ys = torch.linspace(0, y_max, self.obs_y, device=self.device)
+            gx, gy = torch.meshgrid(ys, xs, indexing="ij")  # (H,W)
+            grid = torch.stack((gx, gy), dim=-1).view(-1, 2)  # (H*W,2)
+            GasSurveyEnv._grid_cache[key] = grid
+        return GasSurveyEnv._grid_cache[key]
+
     #@profile
     def _create_obs_coords(self):
 

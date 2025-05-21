@@ -35,25 +35,37 @@ bank.load_envs(envs_file)
 #bank.print_envs_info()
 
 # %%
-models_dir = f"models/{int(time.time())}/"
-logdir = f"logs/{int(time.time())}/"
-
-if not os.path.exists(models_dir):
-	os.makedirs(models_dir)
-
-if not os.path.exists(logdir):
-	os.makedirs(logdir)
-
 env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[10**-5, 0.0], timer=False, debug=False)
+
+load = True
+if load:
+    load_time = '1747301502'
+    load_model = '275'
+    save_prefix = '1_'
+    models_dir = f"models/{load_time}/"
+    logdir = f"logs/{load_time}/"
+
+    agent = PPO.load(f"{models_dir}/{load_model}", env, device=env.device)
+else:
+    models_dir = f"models/{int(time.time())}/"
+    logdir = f"logs/{int(time.time())}/"
+    save_prefix = ''
+
+    if not os.path.exists(models_dir):
+        os.makedirs(models_dir)
+
+    if not os.path.exists(logdir):
+        os.makedirs(logdir)
+
+    agent = PPO('MlpPolicy', env, device=env.device, verbose=1, tensorboard_log=logdir)
 
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
-agent = PPO('MlpPolicy', env, verbose=1, tensorboard_log=logdir)
 TIMESTEPS = 1000
 
 while True:
     agent.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name=f'PPO')
-    agent.save(f"{models_dir}/{env.n_episodes}")
+    agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
 
 # %%
 from stable_baselines3.common.env_checker import check_env
