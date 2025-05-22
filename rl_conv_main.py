@@ -13,7 +13,7 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import importlib
 import torch
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, SAC
 
 import time
 import rl_scenario_bank
@@ -37,7 +37,7 @@ bank.load_envs(envs_file)
 # %%
 env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[10**-5, 0.0], timer=False, debug=False)
 
-load = True
+load = False
 if load:
     load_time = '1747301502'
     load_model = '275'
@@ -45,11 +45,11 @@ if load:
     models_dir = f"models/{load_time}/"
     logdir = f"logs/{load_time}/"
 
-    agent = PPO.load(f"{models_dir}/{load_model}", env, device=env.device)
+    agent = SAC.load(f"{models_dir}/{load_model}", env, device=env.device)
 else:
     models_dir = f"models/{int(time.time())}/"
     logdir = f"logs/{int(time.time())}/"
-    save_prefix = ''
+    save_prefix = '0_'
 
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
@@ -57,14 +57,35 @@ else:
     if not os.path.exists(logdir):
         os.makedirs(logdir)
 
-    agent = PPO('MlpPolicy', env, device=env.device, verbose=1, tensorboard_log=logdir)
+    #agent = PPO('MlpPolicy', env, device=env.device, verbose=1, tensorboard_log=logdir)
+    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=256))
+
+    agent = SAC(
+        "CnnPolicy",
+        env,
+        device=env.device,          # 'cuda', 'mps', or 'cpu'
+        buffer_size=40000,        # fewer GP calls than PPO
+        batch_size=256,
+        learning_rate=3e-4,
+        tau=0.005,                  # target-network smoothing
+        train_freq=1,
+        gradient_steps=1,           # one GD step per env.step()
+        policy_kwargs=policy_kwargs,
+        verbose=1,
+        tensorboard_log=logdir,
+    )
 
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
-TIMESTEPS = 1000
+TIMESTEPS = 50000
 
 while True:
-    agent.learn(total_timesteps=TIMESTEPS, reset_num_timesteps=False, tb_log_name=f'PPO')
+    agent.learn(
+        total_timesteps=TIMESTEPS, 
+        reset_num_timesteps=False, 
+        log_interval=2000,
+        tb_log_name=f'SAC')
+    
     agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
 
 # %%
