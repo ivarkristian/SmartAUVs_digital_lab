@@ -67,24 +67,26 @@ else:
         buffer_size=40000,        # fewer GP calls than PPO
         batch_size=256,
         learning_rate=3e-4,
+        learning_starts=265,
         tau=0.005,                  # target-network smoothing
         train_freq=1,
         gradient_steps=1,           # one GD step per env.step()
         policy_kwargs=policy_kwargs,
         verbose=1,
-        tensorboard_log=logdir,
+        tensorboard_log=logdir
     )
 
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
-TIMESTEPS = 50000
+TIMESTEPS = 940
 
 while True:
     agent.learn(
         total_timesteps=TIMESTEPS, 
         reset_num_timesteps=False, 
-        log_interval=2000,
-        tb_log_name=f'SAC')
+        log_interval=30,
+        tb_log_name=f'SAC'
+        )
     
     agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
 

@@ -75,7 +75,7 @@ class GasSurveyEnv(gym.Env):
         self.n_steps = 0
         self.terminated = False
 
-        if self.debug and (self.n_episodes % 10 == 0):
+        if self.n_episodes % 10 == 0:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.n_episodes):.3}')
 
         # Draw a random scenario/snapshot
@@ -321,21 +321,35 @@ class GasSurveyEnv(gym.Env):
     #@profile
     def _estimate(self):
         if self.mdl is None:
+            if self.debug:
+                print(f'Created model in ._estimate()')
             self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals-self.mu_all, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const)
         
+        t = time.process_time()
         self.mdl.set_train_data(
             inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
-        
+        if self.timer:
+            print(f't3.1 step: {time.process_time()-t}')
+
         # Then predict
+        t = time.process_time()
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             current_pred = self.mdl(self._coords_flat)
-    
+        if self.timer:
+            print(f't3.2 step: {time.process_time()-t}')
+
+        t = time.process_time()
         self.pred_mu = self._tensor_to_obs_channel(current_pred.mean + self.mu_all)
         self.pred_var = self._tensor_to_obs_channel(current_pred.variance)
-
+        if self.timer:
+            print(f't3.3 step: {time.process_time()-t}')
+        
         # Scale to 0-255 ([min_conc, max_conc] from scenario bank)
+        t = time.process_time()
         self.pred_mu_norm = (self.pred_mu - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
         self.pred_var_norm = self.pred_var/self.sigma2_all * 255
+        if self.timer:
+            print(f't3.4 step: {time.process_time()-t}')
 
         return
 
