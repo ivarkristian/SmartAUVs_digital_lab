@@ -35,7 +35,7 @@ bank.load_envs(envs_file)
 #bank.print_envs_info()
 
 # %%
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[10**-5, 0.0], timer=False, debug=False)
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[36, 36], r_weights=[10**-5, 0.0], timer=False, debug=True)
 
 load = False
 if load:
@@ -58,7 +58,7 @@ else:
         os.makedirs(logdir)
 
     #agent = PPO('MlpPolicy', env, device=env.device, verbose=1, tensorboard_log=logdir)
-    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=256))
+    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=64))
 
     agent = SAC(
         "CnnPolicy",

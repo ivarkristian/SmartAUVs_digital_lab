@@ -75,7 +75,7 @@ class GasSurveyEnv(gym.Env):
         self.n_steps = 0
         self.terminated = False
 
-        if self.n_episodes % 10 == 0:
+        if self.n_episodes % 1 == 0:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.n_episodes):.3}')
 
         # Draw a random scenario/snapshot
@@ -157,6 +157,9 @@ class GasSurveyEnv(gym.Env):
         self.obs_y_len=self.env_y_max/self.obs_y
 
         self.old_loc = torch.tensor([loc_x, loc_y, self.depth], device=self.device)
+        if self.debug:
+            print(f'reset loc: {loc_x}, {loc_y}')
+
         ind_x, ind_y = self.loc_to_ind((loc_x, loc_y))
         self.location[ind_y, ind_x] = 255
 
@@ -188,7 +191,7 @@ class GasSurveyEnv(gym.Env):
         old_var = self.pred_var # remember to compare old_var with new pred_norm, not new pred
 
         if self.debug:
-            print(f'action: {action}')
+            print(f'action: {action}', end='')
 
         # expects action to be [-1.0, -1.0] [1.0, 1.0], convert to locs within [0, 255]
         out_of_bounds = not self.action_space.contains(action)
@@ -200,6 +203,9 @@ class GasSurveyEnv(gym.Env):
         )
         new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
         
+        if self.debug:
+            print(f'new_loc: {action}', end='')
+        
         if self.timer:
             print(f't0 step: {time.process_time()-t}')
 
@@ -207,6 +213,8 @@ class GasSurveyEnv(gym.Env):
             obs, truncated, info = self._get_obs_truncated_info()
             reward += -5.0
             self.acc_reward += reward
+            if self.debug:
+                print(f'torch.allclose = True')
             return obs, float(reward), self.terminated, truncated, info
 
         t = time.process_time()
@@ -238,7 +246,7 @@ class GasSurveyEnv(gym.Env):
         self.sample_idx = end_idx
 
         t = time.process_time()
-        self._estimate() # fill self.pred_mu self.pred_var
+        self._estimate() # fill self.pred_mu, self.pred_var
         if self.timer:
             print(f't3 step: {time.process_time()-t}')
         
@@ -250,7 +258,10 @@ class GasSurveyEnv(gym.Env):
         self.location[ind_y][ind_x] = 255
         
         # compute reward (based on decrease in overall variance)
-        var_red = (old_var - self.pred_var).sum()
+        if self.debug:
+            print(f'old_var.mean: {old_var.mean():.4} pred_var.mean: {self.pred_var.mean():.4}')
+
+        var_red = (old_var.mean() - self.pred_var.mean())
         #r_var = 1 + 10*var_red.mean()/old_var.mean()
         r_var = var_red
         #r_var = 2*var_red/(float(self.mdl.get_lengthscale())*len(sample_coords_xy)*old_var.mean())
@@ -269,7 +280,7 @@ class GasSurveyEnv(gym.Env):
         if self.timer:
             print(f'step took: {time.process_time()-tt}')
         if self.debug:
-            print(f'r_var: {r_var}, r_dist: {r_dist}, r_tot: {reward}')
+            print(f'r_var: {r_var:.4}, r_dist: {r_dist:.4}, r_tot: {reward:.4}')
             self._assert_gpu_consistency()
 
         return obs, float(reward), self.terminated, truncated, info
