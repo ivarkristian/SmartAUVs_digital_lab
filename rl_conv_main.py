@@ -31,21 +31,29 @@ bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
 envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
 bank.load_envs(envs_file)
+sensor_range = [0, 2000]
+bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
 #bank.environments = bank.environments[0:5]
 #bank.print_envs_info()
 
 # %%
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[36, 36], r_weights=[10**-5, 0.0], timer=False, debug=True)
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 0.0], timer=False, debug=False)
 
 load = False
 if load:
     load_time = '1747301502'
-    load_model = '275'
+    load_model = '0_1349.zip'
     save_prefix = '1_'
     models_dir = f"models/{load_time}/"
     logdir = f"logs/{load_time}/"
 
-    agent = SAC.load(f"{models_dir}/{load_model}", env, device=env.device)
+    agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
+    try:
+        agent.load_replay_buffer(f"{models_dir}/buffer.pkl")
+    except:
+        print(f'Could not load replay buffer from {models_dir}/buffer.pkl')
+
+    print(f'Loaded model from {models_dir}/{load_model}')
 else:
     models_dir = f"models/{int(time.time())}/"
     logdir = f"logs/{int(time.time())}/"
@@ -58,7 +66,7 @@ else:
         os.makedirs(logdir)
 
     #agent = PPO('MlpPolicy', env, device=env.device, verbose=1, tensorboard_log=logdir)
-    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=64))
+    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=128))
 
     agent = SAC(
         "CnnPolicy",
@@ -89,6 +97,7 @@ while True:
         )
     
     agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
+    agent.save_replay_buffer(f"{models_dir}/buffer.pkl")
 
 # %%
 from stable_baselines3.common.env_checker import check_env

@@ -46,7 +46,7 @@ class GasSurveyEnv(gym.Env):
 
         # Steps until truncated=True (done)
         self.n_episodes = 0
-        self.n_steps_max = 30
+        self.n_steps_max = 20
         self.acc_reward = 0.0
         
         # μ, σ, visited, coord‑Y, coord‑X  → 5 possible channels
@@ -54,7 +54,7 @@ class GasSurveyEnv(gym.Env):
         # Including coord_x/y channels is a bit dangerous, should
         # randomize direction of scenarios, e.g. rotate by 90/180 deg
         # to avoid 'learning the coordinate system'
-        self.channels = np.array([0, 1, 1, 0, 0])
+        self.channels = np.array([0, 1, 1, 1, 1])
 
         self.max_samples = 0
         # reset draws a random scenario, initializes GP model and sample memory
@@ -70,13 +70,13 @@ class GasSurveyEnv(gym.Env):
 
     #@profile
     def reset(self, seed=None, options=None):
+        if self.n_episodes % 1 == 0 and self.n_episodes:
+            print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.n_episodes):.3}')
+
         t = time.process_time()
         self.n_episodes += 1
         self.n_steps = 0
         self.terminated = False
-
-        if self.n_episodes % 1 == 0:
-            print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.n_episodes):.3}')
 
         # Draw a random scenario/snapshot
         random_env = self.scenario_bank.sample()
@@ -92,6 +92,9 @@ class GasSurveyEnv(gym.Env):
         self.time = random_env['time']
         self.cur_dir = random_env['cur_dir']
         self.cur_str = random_env['cur_str']
+
+        if self.debug:
+            print(f"Sampled env '{self.parameter}', depth {self.depth}', time {self.time}")
 
         self.env_x_max = float(self.env_xy[:, 0].max())
         self.env_y_max = float(self.env_xy[:, 1].max())
@@ -131,13 +134,13 @@ class GasSurveyEnv(gym.Env):
         self.mdl.eval()
         self.llh.eval()
        
-        self.values_norm_minmax = self._norm_minmax()
-        self.values_submean = self.values-self.mu_all
+        self.values_submuall = self.values-self.mu_all
         
         # Init sample memory. Could include lawnmower path samples.
         self.max_samples_old = self.max_samples
         self.max_samples = int(self.maxdist*self.n_steps_max)
         self.sample_idx = 0
+        self.sample_idx_mdl = 0
 
         if (hasattr(self, 'sampled_coords') is False) or (self.max_samples != self.max_samples_old):
             # Preallocate memory (on GPU)
@@ -188,10 +191,10 @@ class GasSurveyEnv(gym.Env):
         start_time = '2020-01-01T02:10:00.000000000' # dummy time
         synoptic = True
         old_ind_y, old_ind_x = np.argwhere(self.location)[0]
-        old_var = self.pred_var # remember to compare old_var with new pred_norm, not new pred
+        old_var = self.pred_var_norm_clipped # remember to compare with correct new var  (norm, clipped etc.)
 
         if self.debug:
-            print(f'action: {action}', end='')
+            print(f'action: {action}', end=' ')
 
         # expects action to be [-1.0, -1.0] [1.0, 1.0], convert to locs within [0, 255]
         out_of_bounds = not self.action_space.contains(action)
@@ -202,9 +205,6 @@ class GasSurveyEnv(gym.Env):
             [self.env_x_max, self.env_y_max], dtype=np.float32
         )
         new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
-        
-        if self.debug:
-            print(f'new_loc: {action}', end='')
         
         if self.timer:
             print(f't0 step: {time.process_time()-t}')
@@ -236,6 +236,9 @@ class GasSurveyEnv(gym.Env):
         if self.timer:
             print(f't2 step: {time.process_time()-t}')
         
+        if self.debug:
+            print(f'#Smp: {len(sample_coords_xy)}', end=' ')
+
         end_idx = self.sample_idx + len(sample_coords_xy)
         if end_idx > self.max_samples:
             raise RuntimeError(f"Exceeded maximum number of samples ({self.max_samples})")
@@ -246,7 +249,7 @@ class GasSurveyEnv(gym.Env):
         self.sample_idx = end_idx
 
         t = time.process_time()
-        self._estimate() # fill self.pred_mu, self.pred_var
+        self._estimate() # fill self.pred_mu, self.pred_var and norms
         if self.timer:
             print(f't3 step: {time.process_time()-t}')
         
@@ -259,17 +262,17 @@ class GasSurveyEnv(gym.Env):
         
         # compute reward (based on decrease in overall variance)
         if self.debug:
-            print(f'old_var.mean: {old_var.mean():.4} pred_var.mean: {self.pred_var.mean():.4}')
+            print(f'old_var.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
 
-        var_red = (old_var.mean() - self.pred_var.mean())
+        var_red = (old_var.mean() - self.pred_var_norm.mean())
         #r_var = 1 + 10*var_red.mean()/old_var.mean()
         r_var = var_red
         #r_var = 2*var_red/(float(self.mdl.get_lengthscale())*len(sample_coords_xy)*old_var.mean())
-        r_dist = -len(sample_coords_xy)/self.maxdist
+        r_dist = 0 #-len(sample_coords_xy)/self.maxdist
         r_term = 0
 
-        if self.pred_var.mean() <= 500:
-            r_term = self.pred_var.mean()/self.n_steps
+        if self.pred_var.mean() <= 100:
+            r_term = self.n_steps_max - self.n_steps
             self.terminated = True
 
         reward += self.a_var*r_var + self.a_dist*r_dist + r_term
@@ -281,7 +284,7 @@ class GasSurveyEnv(gym.Env):
             print(f'step took: {time.process_time()-tt}')
         if self.debug:
             print(f'r_var: {r_var:.4}, r_dist: {r_dist:.4}, r_tot: {reward:.4}')
-            self._assert_gpu_consistency()
+            #self._assert_gpu_consistency()
 
         return obs, float(reward), self.terminated, truncated, info
     
@@ -337,15 +340,44 @@ class GasSurveyEnv(gym.Env):
             self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals-self.mu_all, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const)
         
         t = time.process_time()
-        self.mdl.set_train_data(
-            inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
+        #self.mdl.set_train_data(
+        #    inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
+        if self.n_steps > 1:
+            # not first prediction, so choose between using fantasy mdl or set_train_data
+            #if self.sample_idx - self.sample_idx_mdl > 500:
+                # set train data
+            #    self.mdl.set_train_data(
+            #        inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
+            #    self.sample_idx_mdl = self.sample_idx
+            #    use_self_mdl = True
+            #    if self.debug:
+            #        print(f"Set train data")
+            #else:
+                # use fantasy model, adding samples from idx_mdl to idx
+            #self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all)
+            self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all)
+            self.sample_idx_mdl = self.sample_idx
+            use_self_mdl = True
+        else:
+            # first prediction must have train data
+            self.mdl.set_train_data(
+                inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
+            self.sample_idx_mdl = self.sample_idx
+            if self.debug:
+                self.mdl.print_named_parameters()
+            #use_self_mdl = True
+            
         if self.timer:
             print(f't3.1 step: {time.process_time()-t}')
 
         # Then predict
         t = time.process_time()
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            #if use_self_mdl:
             current_pred = self.mdl(self._coords_flat)
+            #else:
+            #    current_pred = mdl_fantasy(self._coords_flat)
+
         if self.timer:
             print(f't3.2 step: {time.process_time()-t}')
 
@@ -440,9 +472,9 @@ class GasSurveyEnv(gym.Env):
         self._coords = np.stack([gx, gy], axis=-1).reshape(-1, 2)      # (H, W, 2)
         self._coords_flat = torch.as_tensor(self._coords, device=self.device)
         
-        # -- 2. static coordinate channels, normalised [0, 1] --
-        self.coord_x_norm = (gx / xs.max())  # (H, W)
-        self.coord_y_norm = (gy / ys.max())  # (H, W)
+        # -- 2. static coordinate channels, normalised [0, 255] --
+        self.coord_x_norm = (gx / self.env_x_max) * 255  # (H, W)
+        self.coord_y_norm = (gy / self.env_y_max) * 255  # (H, W)
 
         return
     

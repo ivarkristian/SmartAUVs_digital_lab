@@ -229,6 +229,15 @@ class ScenarioBank:
 
         return mu_all, sigma2_all
     
+    def clip_sensor_range(self, parameter=None, min=0, max=2000):
+        if not parameter:
+            print(f'No sensor parameter given')
+            return
+        
+        for i in range(len(self.environments)):
+            torch.clamp_(self.environments[i]['values'], min, max)
+
+
     def create_obs_coords(self, resolution):
         
         # Downsampling based on given pred_resolution
