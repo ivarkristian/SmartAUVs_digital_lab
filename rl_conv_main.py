@@ -37,11 +37,9 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 #bank.print_envs_info()
 
 # %%
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 0.0], timer=False, debug=True)
-
-# %%
 env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 0.0], timer=False, debug=False)
 
+# %%
 load = False
 if load:
     load_time = '1747301502'
