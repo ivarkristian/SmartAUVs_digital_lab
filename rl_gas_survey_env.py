@@ -70,7 +70,7 @@ class GasSurveyEnv(gym.Env):
 
     #@profile
     def reset(self, seed=None, options=None):
-        if self.n_episodes % 1 == 0 and self.n_episodes:
+        if self.n_episodes % 10 == 0 and self.n_episodes:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.n_episodes):.3}')
 
         t = time.process_time()
@@ -266,10 +266,10 @@ class GasSurveyEnv(gym.Env):
 
         var_red = (old_var.mean() - self.pred_var_norm.mean())
         #r_var = 1 + 10*var_red.mean()/old_var.mean()
-        r_var = var_red
+        r_var = var_red # reward for reducing variance
         #r_var = 2*var_red/(float(self.mdl.get_lengthscale())*len(sample_coords_xy)*old_var.mean())
-        r_dist = 0 #-len(sample_coords_xy)/self.maxdist
-        r_term = 0
+        r_dist = -2.0 # penalty for changing course
+        r_term = 0.0
 
         if self.pred_var.mean() <= 100:
             r_term = self.n_steps_max - self.n_steps
