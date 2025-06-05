@@ -49,20 +49,26 @@ class GasSurveyEnv(gym.Env):
         self.n_steps_max = 20
         self.acc_reward = 0.0
         
-        # μ, σ, visited, coord‑Y, coord‑X  → 5 possible channels
-        # Could instead of 'visited' include location channels
+        # μ, σ, location, coord‑Y, coord‑X  → 5 possible channels
+        # Could instead of location include 'visited' channel
         # Including coord_x/y channels is a bit dangerous, should
         # randomize direction of scenarios, e.g. rotate by 90/180 deg
         # to avoid 'learning the coordinate system'
-        self.channels = np.array([0, 1, 1, 1, 1])
+        self.channels = np.array([0, 1, 0, 1, 1])
 
         self.max_samples = 0
         # reset draws a random scenario, initializes GP model and sample memory
         obs, _ = self.reset()
     
-        self.observation_space = spaces.Box(
+        # observation space
+        self.observation_layers = spaces.Box(
             low=0, high=255, shape=(self.channels.sum(), self.obs_x, self.obs_y), dtype=np.uint8
         )
+        
+        self.observation_space = spaces.Dict({
+            "map": self.observation_layers,
+            "loc": spaces.Box(-1.0, 1.0, (2,), np.float32),
+        })
 
          # Action space is a float anywhere inside this box:
         self.action_space = spaces.Box( low=np.array([-1.0, -1.0]),
@@ -159,7 +165,7 @@ class GasSurveyEnv(gym.Env):
         self.obs_x_len=self.env_x_max/self.obs_x
         self.obs_y_len=self.env_y_max/self.obs_y
 
-        self.old_loc = torch.tensor([loc_x, loc_y, self.depth], device=self.device)
+        self.loc = torch.tensor([loc_x, loc_y, self.depth], device=self.device)
         if self.debug:
             print(f'reset loc: {loc_x}, {loc_y}')
 
@@ -173,8 +179,9 @@ class GasSurveyEnv(gym.Env):
         if self.debug:
             self._assert_gpu_consistency()
 
-        obs = self._render_layers()
-        info = {}
+        #obs = self._render_layers()
+        #info = {}
+        obs, _, info = self._get_obs_truncated_info()
         
         if self.timer:
             print(f'reset took: {time.process_time() - t}')
@@ -204,12 +211,12 @@ class GasSurveyEnv(gym.Env):
         new_xy = ((action + 1.0) / 2.0) * np.array(
             [self.env_x_max, self.env_y_max], dtype=np.float32
         )
-        new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
+        self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
         
         if self.timer:
             print(f't0 step: {time.process_time()-t}')
 
-        if torch.allclose(self.old_loc, new_loc):
+        if torch.allclose(self.loc, self.new_loc):
             obs, truncated, info = self._get_obs_truncated_info()
             reward += -5.0
             self.acc_reward += reward
@@ -218,7 +225,7 @@ class GasSurveyEnv(gym.Env):
             return obs, float(reward), self.terminated, truncated, info
 
         t = time.process_time()
-        sample_coords = path.path([self.old_loc.cpu(), new_loc.cpu()], start_time, speed, sample_freq, synoptic)
+        sample_coords = path.path([self.loc.cpu(), self.new_loc.cpu()], start_time, speed, sample_freq, synoptic)
         # Extract the first two elements of each tuple and convert to a torch tensor
         sample_coords_xy = [(float(k[0]), float(k[1])) for k in sample_coords]
         
@@ -254,10 +261,10 @@ class GasSurveyEnv(gym.Env):
             print(f't3 step: {time.process_time()-t}')
         
         # Update location
-        self.old_loc = new_loc.detach()
+        self.loc = self.new_loc.detach()
         self.location[old_ind_y, old_ind_x] = 0
 
-        ind_x, ind_y = self.loc_to_ind((new_loc[0].item(), new_loc[1].item()))
+        ind_x, ind_y = self.loc_to_ind((self.loc[0].item(), self.loc[1].item()))
         self.location[ind_y][ind_x] = 255
         
         # compute reward (based on decrease in overall variance)
@@ -275,6 +282,7 @@ class GasSurveyEnv(gym.Env):
             r_term = self.n_steps_max - self.n_steps
             self.terminated = True
 
+        # IMPLEMENT REWARD SCALING ~1
         reward += self.a_var*r_var + self.a_dist*r_dist + r_term
 
         obs, truncated, info = self._get_obs_truncated_info()
@@ -300,10 +308,18 @@ class GasSurveyEnv(gym.Env):
         return x_idx, y_idx
 
     def _get_obs_truncated_info(self):
-        obs  = self._render_layers()
+        layers_uint8  = self._render_layers()
+        loc_x = ((self.loc[0]/self.env_x_max)*2.0 - 1.0).cpu()
+        loc_y = ((self.loc[1]/self.env_y_max)*2.0 - 1.0).cpu()
+
+        obs_dict = {
+            "map": layers_uint8,           # (C,H,W)
+            "loc": np.array([loc_x, loc_y], np.float32),
+        }
+
         truncated = (self.n_steps >= self.n_steps_max)
         info = {}
-        return obs, truncated, info
+        return obs_dict, truncated, info
 
     def _assert_gpu_consistency(self):
 
@@ -526,4 +542,15 @@ class GasSurveyEnv(gym.Env):
 
         return fig, ax
 
-    
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureCNN
+
+class MapPlusLocExtractor(BaseFeaturesExtractor):
+    def __init__(self, obs_space: spaces.Dict, features_dim=512):
+        super().__init__(obs_space, features_dim)
+        self.cnn = NatureCNN(obs_space["map"], features_dim=256)
+        self.linear = torch.nn.Linear(256 + 2, features_dim)
+
+    def forward(self, obs):
+        map_feats = self.cnn(obs["map"])
+        x = torch.cat([map_feats, obs["loc"]], dim=1)
+        return torch.relu(self.linear(x))    

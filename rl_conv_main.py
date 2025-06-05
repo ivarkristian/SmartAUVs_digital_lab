@@ -37,7 +37,7 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 #bank.print_envs_info()
 
 # %%
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 0.0], timer=False, debug=False)
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], timer=False, debug=True)
 
 # %%
 load = False
@@ -66,24 +66,33 @@ else:
     if not os.path.exists(logdir):
         os.makedirs(logdir)
 
-    #agent = PPO('MlpPolicy', env, device=env.device, verbose=1, tensorboard_log=logdir)
-    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=256))
+#    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=256))
+    policy_kwargs = dict(
+        features_extractor_class=rl_gas_survey_env.MapPlusLocExtractor,
+        features_extractor_kwargs=dict(features_dim=512),
+    )
 
     agent = SAC(
-        "CnnPolicy",
-        env,
-        device=env.device,          # 'cuda', 'mps', or 'cpu'
-        buffer_size=40000,        # fewer GP calls than PPO
-        batch_size=256,
-        learning_rate=3e-4,
-        learning_starts=265,
-        tau=0.005,                  # target-network smoothing
-        train_freq=1,
-        gradient_steps=1,           # one GD step per env.step()
+        "MultiInputPolicy",
+        env,                        # env returns {"map": ..., "loc": ...}
         policy_kwargs=policy_kwargs,
-        verbose=1,
-        tensorboard_log=logdir
+        device=env.device
     )
+    # agent = SAC(
+    #     "CnnPolicy",
+    #     env,
+    #     device=env.device,          # 'cuda', 'mps', or 'cpu'
+    #     buffer_size=4000,        # fewer GP calls than PPO
+    #     batch_size=256,
+    #     learning_rate=3e-4,
+    #     learning_starts=265,
+    #     tau=0.005,                  # target-network smoothing
+    #     train_freq=1,
+    #     gradient_steps=1,           # one GD step per env.step()
+    #     policy_kwargs=policy_kwargs,
+    #     verbose=1,
+    #     tensorboard_log=logdir
+    # )
 
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
