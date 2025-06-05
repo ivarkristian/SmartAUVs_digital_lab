@@ -75,6 +75,7 @@ else:
     agent = SAC(
         "MultiInputPolicy",
         env,                        # env returns {"map": ..., "loc": ...}
+        buffer_size=40000,
         policy_kwargs=policy_kwargs,
         device=env.device
     )
