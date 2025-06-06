@@ -76,10 +76,11 @@ else:
         "MultiInputPolicy",
         env,                        # env returns {"map": ..., "loc": ...}
         device=env.device,
+        optimize_memory_usage=True,
         buffer_size=40000,
         batch_size=256,
         learning_rate=3e-4,
-        learning_starts=265,
+        learning_starts=256,
         tau=0.005,
         train_freq=1,
         gradient_steps=1,
@@ -105,6 +106,7 @@ else:
 
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
+torch.cuda.memory._record_memory_history()
 TIMESTEPS = 940
 
 while True:
@@ -114,7 +116,7 @@ while True:
         log_interval=30,
         tb_log_name=f'SAC'
         )
-    
+    #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
     agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
     agent.save_replay_buffer(f"{models_dir}/buffer.pkl")
 
