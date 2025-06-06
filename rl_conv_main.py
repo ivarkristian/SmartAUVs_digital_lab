@@ -13,7 +13,8 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import importlib
 import torch
-from stable_baselines3 import PPO, SAC
+from stable_baselines3 import SAC
+from stable_baselines3.common.buffers import DictReplayBuffer
 
 import time
 import rl_scenario_bank
@@ -38,6 +39,15 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 
 # %%
 env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], timer=False, debug=False)
+
+buffer_size = 40_000                      # how many transitions
+replay_buffer = DictReplayBuffer(
+    buffer_size=buffer_size,
+    observation_space=env.observation_space,
+    action_space=env.action_space,
+    device="cpu",                            # <<< stays on host RAM
+    optimize_memory_usage=False              # must be False for Dict
+)
 
 # %%
 load = False
@@ -76,7 +86,6 @@ else:
         "MultiInputPolicy",
         env,                        # env returns {"map": ..., "loc": ...}
         device=env.device,
-        optimize_memory_usage=True,
         buffer_size=40000,
         batch_size=256,
         learning_rate=3e-4,
@@ -88,6 +97,8 @@ else:
         verbose=1,
         tensorboard_log=logdir
     )
+
+    agent.replay_buffer = replay_buffer          # overwrite in place
     # agent = SAC(
     #     "CnnPolicy",
     #     env,

@@ -551,6 +551,12 @@ class MapPlusLocExtractor(BaseFeaturesExtractor):
         self.linear = torch.nn.Linear(256 + 2, features_dim)
 
     def forward(self, obs):
-        map_feats = self.cnn(obs["map"])
-        x = torch.cat([map_feats, obs["loc"]], dim=1)
-        return torch.relu(self.linear(x))    
+        device = self.fc.weight.device          # extractor is on same device as policy
+        map_t = obs["map"].to(device).float().div(255.0)  # scale 0-1
+        loc_t = obs["loc"].to(device)
+        map_feats = self.cnn(map_t)
+        return torch.relu(self.fc(torch.cat([map_feats, loc_t], dim=1)))
+    
+        #map_feats = self.cnn(obs["map"])
+        #x = torch.cat([map_feats, obs["loc"]], dim=1)
+        #return torch.relu(self.linear(x))    
