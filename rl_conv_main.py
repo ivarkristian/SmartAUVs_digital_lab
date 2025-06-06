@@ -37,7 +37,7 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 #bank.print_envs_info()
 
 # %%
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], timer=False, debug=True)
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], timer=False, debug=False)
 
 # %%
 load = False
@@ -75,9 +75,17 @@ else:
     agent = SAC(
         "MultiInputPolicy",
         env,                        # env returns {"map": ..., "loc": ...}
+        device=env.device,
         buffer_size=40000,
+        batch_size=256,
+        learning_rate=3e-4,
+        learning_starts=265,
+        tau=0.005,
+        train_freq=1,
+        gradient_steps=1,
         policy_kwargs=policy_kwargs,
-        device=env.device
+        verbose=1,
+        tensorboard_log=logdir
     )
     # agent = SAC(
     #     "CnnPolicy",
