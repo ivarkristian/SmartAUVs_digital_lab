@@ -117,7 +117,7 @@ else:
 
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
-torch.cuda.memory._record_memory_history()
+#torch.cuda.memory._record_memory_history()
 TIMESTEPS = 940
 
 while True:
