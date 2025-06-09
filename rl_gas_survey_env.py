@@ -19,7 +19,7 @@ import chem_utils
 
 # %%
 class GasSurveyEnv(gym.Env):
-    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], timer=False, debug=False):
+    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], timer=False, debug=False, device=None):
         super(GasSurveyEnv, self).__init__()
         self.debug = debug
         self.timer = timer
@@ -27,11 +27,13 @@ class GasSurveyEnv(gym.Env):
         # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
         #if torch.backends.mps.is_available():
         #    self.device = torch.device("mps")
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda")
+        if device is None:
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            else:
+                self.device = torch.device("cpu")
         else:
-            self.device = torch.device("cpu")
-
+            self.device = device
         # Load scenario bank
         self.scenario_bank = scenario_bank
         self.min_concentration, self.max_concentration = map(
