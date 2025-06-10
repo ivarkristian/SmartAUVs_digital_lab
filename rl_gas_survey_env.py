@@ -274,17 +274,17 @@ class GasSurveyEnv(gym.Env):
             print(f'old_var.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
 
         var_red = (old_var.mean() - self.pred_var_norm.mean())
-        #r_var = 1 + 10*var_red.mean()/old_var.mean()
-        r_var = var_red # reward for reducing variance
-        #r_var = 2*var_red/(float(self.mdl.get_lengthscale())*len(sample_coords_xy)*old_var.mean())
-        r_dist = -2.0 # penalty for changing course
+        #r_var = var_red # reward for reducing variance
+        r_var = var_red/float(len(sample_coords_xy)*0.0694)
+        r_dist = 0.0 # penalty for changing course
         r_term = 0.0
 
-        if self.pred_var.mean() <= 100:
+        if self.pred_var.mean() <= 90:
             r_term = self.n_steps_max - self.n_steps
             self.terminated = True
 
         # IMPLEMENT REWARD SCALING ~1
+        
         reward += self.a_var*r_var + self.a_dist*r_dist + r_term
 
         obs, truncated, info = self._get_obs_truncated_info()
