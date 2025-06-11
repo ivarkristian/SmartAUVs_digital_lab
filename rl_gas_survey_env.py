@@ -9,7 +9,7 @@ import random
 import matplotlib.pyplot as plt
 import time
 from typing import Tuple, List
-from stable_baselines3.common.buffers import DictReplayBuffer
+from stable_baselines3.common.buffers import DictReplayBuffer, DictReplayBufferSamples
 
 from gpt_class_exactgpmodel import ExactGPModel
 import path
@@ -20,22 +20,14 @@ import chem_utils
 
 # %%
 class GasSurveyEnv(gym.Env):
-    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='relative', timer=False, debug=False, device=None):
+    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='relative', timer=False, debug=False, device=torch.device("cpu")):
         super(GasSurveyEnv, self).__init__()
         self.debug = debug
         self.timer = timer
         self.action_mode = action_mode
         self.a_var, self.a_dist = r_weights
-        # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
-        #if torch.backends.mps.is_available():
-        #    self.device = torch.device("mps")
-        if device is None:
-            if torch.cuda.is_available():
-                self.device = torch.device("cuda")
-            else:
-                self.device = torch.device("cpu")
-        else:
-            self.device = device
+        
+        self.device = device
         # Load scenario bank
         self.scenario_bank = scenario_bank
         self.min_concentration, self.max_concentration = map(
@@ -579,8 +571,25 @@ class MapPlusLocExtractor(BaseFeaturesExtractor):
         return torch.relu(self.linear(torch.cat([map_feats, loc_t], dim=1)))
 
 class CpuDictReplayBuffer(DictReplayBuffer):
-    def sample(self, batch_size, env=None, device=None):
-        # default to the model's device if none given
-        if device is None:
-            device = torch.device("cuda")        # or model.device
-        return super().sample(batch_size, env=env, device=device)
+    def __init__(self, *args, sample_device=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.sample_device = torch.device(sample_device) if sample_device else None
+
+    @staticmethod
+    def _to_device(batch: DictReplayBufferSamples, device: torch.device):
+        """Return a *new* DictReplayBufferSamples living on `device`."""
+        obs        = {k: v.to(device) for k, v in batch.observations.items()}
+        next_obs   = {k: v.to(device) for k, v in batch.next_observations.items()}
+        actions    = batch.actions.to(device)
+        rewards    = batch.rewards.to(device)
+        dones      = batch.dones.to(device)
+        return DictReplayBufferSamples(obs, actions, next_obs, dones, rewards)
+
+    # override -----------------------------------------------------------
+    def sample(self, batch_size: int, env=None, device=None):
+        batch = super().sample(batch_size, env=env)   # still on CPU
+
+        target_device = device or self.sample_device
+        if target_device is not None:
+            batch = self._to_device(batch, target_device)
+        return batch

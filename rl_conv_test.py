@@ -1,9 +1,14 @@
 # %%
 import torch
 from stable_baselines3 import SAC
+import importlib
 
 import rl_scenario_bank
 import rl_gas_survey_env
+
+# %%
+importlib.reload(rl_gas_survey_env)
+importlib.reload(rl_scenario_bank)
 
 # %%
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')

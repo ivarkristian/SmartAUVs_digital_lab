@@ -37,9 +37,17 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 #bank.print_envs_info()
 
 # %%
-#env_device = torch.device("cpu")
-env_device = None
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='absolute', timer=False, debug=False, device=env_device)
+# Device selection supporting CUDA, MPS (Apple Silicon), or CPU
+#if torch.backends.mps.is_available():
+#    self.device = torch.device("mps")
+device = None
+if device is None:
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='absolute', timer=False, debug=False, device=device)
 
 buffer_size = 40_000                      # how many transitions
 # replay_buffer = DictReplayBuffer(
@@ -49,13 +57,13 @@ buffer_size = 40_000                      # how many transitions
 #     device="cpu",                            # <<< stays on host RAM
 #     optimize_memory_usage=False              # must be False for Dict
 # )
-
 replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
-    buffer_size=buffer_size,
-    observation_space=env.observation_space,
-    action_space=env.action_space,
-    device="cpu",                   # storage on RAM
-    optimize_memory_usage=False
+    buffer_size       = buffer_size,
+    observation_space = env.observation_space,
+    action_space      = env.action_space,
+    device            = "cpu",           # storage
+    sample_device     = device,          # default target device
+    optimize_memory_usage = False
 )
 
 # %%
@@ -107,7 +115,7 @@ else:
         tensorboard_log=logdir
     )
 
-    #agent.replay_buffer = replay_buffer          # overwrite in place
+    agent.replay_buffer = replay_buffer          # overwrite in place
     # agent = SAC(
     #     "CnnPolicy",
     #     env,
