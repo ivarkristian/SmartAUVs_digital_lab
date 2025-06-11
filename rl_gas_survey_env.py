@@ -19,10 +19,11 @@ import chem_utils
 
 # %%
 class GasSurveyEnv(gym.Env):
-    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], timer=False, debug=False, device=None):
+    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='relative', timer=False, debug=False, device=None):
         super(GasSurveyEnv, self).__init__()
         self.debug = debug
         self.timer = timer
+        self.action_mode = action_mode
         self.a_var, self.a_dist = r_weights
         # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
         #if torch.backends.mps.is_available():
@@ -72,9 +73,13 @@ class GasSurveyEnv(gym.Env):
             "loc": spaces.Box(-1.0, 1.0, (2,), np.float32),
         })
 
-         # Action space is a float anywhere inside this box:
+        # Actions can be either absolute or relative to current location.
+        # In either case,
+        # Action space is a float anywhere inside this box:
         self.action_space = spaces.Box( low=np.array([-1.0, -1.0]),
                                         high=np.array([1.0, 1.0]), dtype=np.float32)
+        
+        print(f'Init env, \ndevice: {self.device}\naction_mode: {self.action_mode}\nchannels: {self.channels}')
 
     #@profile
     def reset(self, seed=None, options=None):
@@ -205,15 +210,29 @@ class GasSurveyEnv(gym.Env):
         if self.debug:
             print(f'action: {action}', end=' ')
 
-        # expects action to be [-1.0, -1.0] [1.0, 1.0], convert to locs within [0, 255]
+        # expects action to be [-1.0, -1.0] [1.0, 1.0]
         out_of_bounds = not self.action_space.contains(action)
         if out_of_bounds:
             action = np.clip(action, self.action_space.low, self.action_space.high)
 
-        new_xy = ((action + 1.0) / 2.0) * np.array(
-            [self.env_x_max, self.env_y_max], dtype=np.float32
-        )
-        self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
+        if self.action_mode == 'absolute':
+            new_xy = ((action + 1.0) / 2.0) * np.array(
+                [self.env_x_max, self.env_y_max], dtype=np.float32
+            )
+            self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
+        else: # action_mode == 'relative' (default)
+            delta_xy = action * np.array([self.env_x_max, self.env_y_max], dtype=np.float32)
+            new_xy = self.loc[:2].numpy() + delta_xy
+            out_of_bounds = not self.action_space.contains(new_xy)
+            if out_of_bounds:
+                obs, truncated, info = self._get_obs_truncated_info()
+                reward += -5.0
+                self.acc_reward += reward
+                if self.debug:
+                    print(f'out_of_bounds = True')
+                return obs, float(reward), self.terminated, truncated, info
+            else:
+                self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
         
         if self.timer:
             print(f't0 step: {time.process_time()-t}')
@@ -273,17 +292,16 @@ class GasSurveyEnv(gym.Env):
         if self.debug:
             print(f'old_var.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
 
-        var_red = (old_var.mean() - self.pred_var_norm.mean())
-        #r_var = var_red # reward for reducing variance
-        r_var = var_red/float(len(sample_coords_xy)*0.0694)
-        r_dist = 0.0 # penalty for changing course
+        var_red = (old_var.mean() - self.pred_var_norm.mean())/old_var.mean()
+        r_var = var_red # reward for reducing variance
+        #r_var = var_red/float(len(sample_coords_xy)*0.0694)
+        r_dist = -0.1 # step penalty (for changing course)
         r_term = 0.0
 
         if self.pred_var.mean() <= 90:
-            r_term = self.n_steps_max - self.n_steps
+            #r_term = self.n_steps_max - self.n_steps
+            r_term = 1.0
             self.terminated = True
-
-        # IMPLEMENT REWARD SCALING ~1
         
         reward += self.a_var*r_var + self.a_dist*r_dist + r_term
 
