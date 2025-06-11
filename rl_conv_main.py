@@ -98,7 +98,7 @@ else:
         tensorboard_log=logdir
     )
 
-    agent.replay_buffer = replay_buffer          # overwrite in place
+    #agent.replay_buffer = replay_buffer          # overwrite in place
     # agent = SAC(
     #     "CnnPolicy",
     #     env,
@@ -118,7 +118,7 @@ else:
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
 #torch.cuda.memory._record_memory_history()
-TIMESTEPS = 940
+TIMESTEPS = 2400
 
 while True:
     agent.learn(
