@@ -42,12 +42,20 @@ env_device = None
 env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='absolute', timer=False, debug=False, device=env_device)
 
 buffer_size = 40_000                      # how many transitions
-replay_buffer = DictReplayBuffer(
+# replay_buffer = DictReplayBuffer(
+#     buffer_size=buffer_size,
+#     observation_space=env.observation_space,
+#     action_space=env.action_space,
+#     device="cpu",                            # <<< stays on host RAM
+#     optimize_memory_usage=False              # must be False for Dict
+# )
+
+replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
     buffer_size=buffer_size,
     observation_space=env.observation_space,
     action_space=env.action_space,
-    device="cpu",                            # <<< stays on host RAM
-    optimize_memory_usage=False              # must be False for Dict
+    device="cpu",                   # storage on RAM
+    optimize_memory_usage=False
 )
 
 # %%

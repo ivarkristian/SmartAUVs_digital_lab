@@ -9,6 +9,7 @@ import random
 import matplotlib.pyplot as plt
 import time
 from typing import Tuple, List
+from stable_baselines3.common.buffers import DictReplayBuffer
 
 from gpt_class_exactgpmodel import ExactGPModel
 import path
@@ -576,7 +577,10 @@ class MapPlusLocExtractor(BaseFeaturesExtractor):
         loc_t = obs["loc"].to(device)
         map_feats = self.cnn(map_t)
         return torch.relu(self.linear(torch.cat([map_feats, loc_t], dim=1)))
-    
-        #map_feats = self.cnn(obs["map"])
-        #x = torch.cat([map_feats, obs["loc"]], dim=1)
-        #return torch.relu(self.linear(x))    
+
+class CpuDictReplayBuffer(DictReplayBuffer):
+    def sample(self, batch_size, env=None, device=None):
+        # default to the model's device if none given
+        if device is None:
+            device = torch.device("cuda")        # or model.device
+        return super().sample(batch_size, env=env, device=device)
