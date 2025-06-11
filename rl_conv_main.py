@@ -37,7 +37,8 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 #bank.print_envs_info()
 
 # %%
-env_device = torch.device("cpu")
+#env_device = torch.device("cpu")
+env_device = None
 env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='absolute', timer=False, debug=False, device=env_device)
 
 buffer_size = 40_000                      # how many transitions
