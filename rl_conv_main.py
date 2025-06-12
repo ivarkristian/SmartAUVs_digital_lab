@@ -70,6 +70,7 @@ replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
 )
 
 # %%
+host = socket.gethostname().split('.')[0]
 load = False
 if load:
     load_time = '1749667471'
@@ -86,8 +87,8 @@ if load:
 
     print(f'Loaded model from {models_dir}/{load_model}')
 else:
-    models_dir = f"models/{int(time.time())}/"
-    logdir = f"logs/{int(time.time())}/"
+    models_dir = f"models/{int(time.time())}_{host}/"
+    logdir = f"logs/{int(time.time())}_{host}/"
     save_prefix = '0_'
 
     if not os.path.exists(models_dir):
@@ -138,7 +139,6 @@ else:
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
 #torch.cuda.memory._record_memory_history()
-host = socket.gethostname().split('.')[0]
 TIMESTEPS = 2400
 
 while True:
@@ -149,8 +149,8 @@ while True:
         tb_log_name=f'SAC'
         )
     #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
-    agent.save(f"{models_dir}_{host}/{save_prefix}{env.n_episodes}")
-    agent.save_replay_buffer(f"{models_dir}_{host}/buffer.pkl")
+    agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
+    agent.save_replay_buffer(f"{models_dir}/buffer.pkl")
 
 # %%
 from stable_baselines3.common.env_checker import check_env
