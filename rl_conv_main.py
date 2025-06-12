@@ -63,7 +63,7 @@ replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
     buffer_size       = buffer_size,
     observation_space = env.observation_space,
     action_space      = env.action_space,
-    device            = "cpu",           # storage
+    device            = "cuda",           # storage
     sample_device     = device,          # default target device
     optimize_memory_usage = False
 )
