@@ -9,6 +9,7 @@
 from memory_profiler import profile
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+import socket
 
 import importlib
 import torch
@@ -137,6 +138,7 @@ else:
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
 #torch.cuda.memory._record_memory_history()
+host = socket.gethostname().split('.')[0]
 TIMESTEPS = 2400
 
 while True:
@@ -147,8 +149,8 @@ while True:
         tb_log_name=f'SAC'
         )
     #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
-    agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
-    agent.save_replay_buffer(f"{models_dir}/buffer.pkl")
+    agent.save(f"{models_dir}_{host}/{save_prefix}{env.n_episodes}")
+    agent.save_replay_buffer(f"{models_dir}_{host}/buffer.pkl")
 
 # %%
 from stable_baselines3.common.env_checker import check_env
