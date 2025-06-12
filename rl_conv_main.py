@@ -44,6 +44,8 @@ device = None
 if device is None:
     if torch.cuda.is_available():
         device = torch.device("cuda")
+        from torch.utils.viz._cycles import warn_tensor_cycles
+        warn_tensor_cycles()
     else:
         device = torch.device("cpu")
 
@@ -67,12 +69,12 @@ replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
 )
 
 # %%
-load = False
+load = True
 if load:
-    load_time = '1747301502'
-    load_model = '0_1349.zip'
+    load_time = '1749667471'
+    load_model = '0_1323'
     save_prefix = '1_'
-    models_dir = f"models/{load_time}/"
+    models_dir = f"models/{load_time}"
     logdir = f"logs/{load_time}/"
 
     agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
