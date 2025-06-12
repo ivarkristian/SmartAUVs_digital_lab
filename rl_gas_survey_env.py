@@ -127,9 +127,7 @@ class GasSurveyEnv(gym.Env):
             del self.llh
         
         gc.collect()
-        print(f'self.device.type={self.device.type}', end=' ')
         if self.device.type == 'cuda':
-            print(f'...emptying cache...')
             torch.cuda.empty_cache()
 
         self.llh = gpytorch.likelihoods.GaussianLikelihood().to(self.device)

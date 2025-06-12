@@ -44,8 +44,8 @@ device = None
 if device is None:
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        from torch.utils.viz._cycles import warn_tensor_cycles
-        warn_tensor_cycles()
+        #from torch.utils.viz._cycles import warn_tensor_cycles
+        #warn_tensor_cycles()
     else:
         device = torch.device("cpu")
 
