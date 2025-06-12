@@ -2,6 +2,7 @@ from memory_profiler import profile
 import gpytorch.constraints
 import torch
 import gpytorch
+import gc
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
@@ -118,12 +119,17 @@ class GasSurveyEnv(gym.Env):
 
         # Init GP model
         if hasattr(self, 'mdl'):
+            self.mdl.cpu()
             del self.mdl
             
         if hasattr(self, 'llh'):
+            self.llh.cpu()
             del self.llh
         
+        gc.collect()
+        print(f'self.device.type={self.device.type}', end=' ')
         if self.device.type == 'cuda':
+            print(f'...emptying cache...')
             torch.cuda.empty_cache()
 
         self.llh = gpytorch.likelihoods.GaussianLikelihood().to(self.device)

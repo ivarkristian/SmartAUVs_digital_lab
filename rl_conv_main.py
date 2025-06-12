@@ -69,7 +69,7 @@ replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
 )
 
 # %%
-load = True
+load = False
 if load:
     load_time = '1749667471'
     load_model = '0_1323'
