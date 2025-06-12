@@ -183,8 +183,6 @@ class GasSurveyEnv(gym.Env):
         if self.debug:
             self._assert_gpu_consistency()
 
-        #obs = self._render_layers()
-        #info = {}
         obs, _, info = self._get_obs_truncated_info()
         
         if self.timer:
@@ -370,25 +368,14 @@ class GasSurveyEnv(gym.Env):
         if self.mdl is None:
             if self.debug:
                 print(f'Created model in ._estimate()')
-            self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals-self.mu_all, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const)
+            self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals-self.mu_all, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const).to(self.device)
         
         t = time.process_time()
         #self.mdl.set_train_data(
         #    inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
         if self.n_steps > 1:
             # not first prediction, so choose between using fantasy mdl or set_train_data
-            #if self.sample_idx - self.sample_idx_mdl > 500:
-                # set train data
-            #    self.mdl.set_train_data(
-            #        inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
-            #    self.sample_idx_mdl = self.sample_idx
-            #    use_self_mdl = True
-            #    if self.debug:
-            #        print(f"Set train data")
-            #else:
-                # use fantasy model, adding samples from idx_mdl to idx
-            #self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all)
-            self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all)
+            self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all).to(self.device)
             self.sample_idx_mdl = self.sample_idx
             use_self_mdl = True
         else:
@@ -398,7 +385,6 @@ class GasSurveyEnv(gym.Env):
             self.sample_idx_mdl = self.sample_idx
             if self.debug:
                 self.mdl.print_named_parameters()
-            #use_self_mdl = True
             
         if self.timer:
             print(f't3.1 step: {time.process_time()-t}')
