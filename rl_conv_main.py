@@ -15,7 +15,7 @@ import numpy as np
 import importlib
 import torch
 from stable_baselines3 import SAC
-from stable_baselines3.common.buffers import DictReplayBuffer
+#from stable_baselines3.common.buffers import DictReplayBuffer
 
 import time
 import rl_scenario_bank
@@ -81,11 +81,10 @@ logs_dir = logs_parent + current_dir
 
 load = False
 if load:
-    load_time = '1749667471'
-    load_model = '0_1323'
+    load_time = '1749667471_dunder' # timestamp_host
+    load_model = '0_1323' # zip-file without extension
     save_prefix = '1_'
-    models_dir = f"models/{load_time}"
-    logdir = f"logs/{load_time}/"
+    models_dir = f"{models_parent}/{load_time}"
 
     agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
     try:

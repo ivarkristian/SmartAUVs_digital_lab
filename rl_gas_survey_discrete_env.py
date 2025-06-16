@@ -20,12 +20,14 @@ import chem_utils
 # Definitions
 
 # %%
-class GasSurveyEnv(gym.Env):
+class GasSurveyDiscEnv(gym.Env):
     def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode={'relative', 250, 250}, channels=np.array([0, 1, 0, 1, 1]), timer=False, debug=False, device=torch.device("cpu")):
-        super(GasSurveyEnv, self).__init__()
+        super(GasSurveyDiscEnv, self).__init__()
         self.debug = debug
         self.timer = timer
         self.action_mode = action_mode
+        self.step_length = self.action_mode[1]
+
         self.a_var, self.a_dist = r_weights
         
         self.device = device
@@ -70,12 +72,9 @@ class GasSurveyEnv(gym.Env):
             "loc": spaces.Box(-1.0, 1.0, (2,), np.float32),
         })
 
-        # Actions can be either absolute or relative to current location.
-        # In either case,
-        # Action space is a float anywhere inside this box:
-        self.action_space = spaces.Box( low=np.array([-1.0, -1.0]),
-                                        high=np.array([1.0, 1.0]), dtype=np.float32)
-        
+        #Discrete action space, up - 0, down - 1, left - 2, right - 3:
+        self.action_space = spaces.Discrete(4)
+
         print(f'Init env, \ndevice: {self.device}\naction_mode: {self.action_mode}\nchannels: {self.channels}')
 
     #@profile
@@ -109,7 +108,7 @@ class GasSurveyEnv(gym.Env):
 
         self.env_x_max = float(self.env_xy[:, 0].max())
         self.env_y_max = float(self.env_xy[:, 1].max())
-        self.maxdist=((self.action_mode[1]**2 + self.action_mode[2]**2)**0.5)
+        self.maxdist=self.action_mode[1]
 
         # Init observation channels
         self._create_obs_coords()
@@ -179,7 +178,7 @@ class GasSurveyEnv(gym.Env):
 
         #ind_x, ind_y = self.loc_to_ind((loc_x, loc_y))
         #self.location[ind_y, ind_x] = 255
-        self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
+        self.make_circle(self.loc[0], self.loc[1], self.location_radius)
 
         # Init prediction tensors
         self.pred_mu = np.zeros((self.obs_y, self.obs_x), dtype=np.float32)
@@ -207,33 +206,22 @@ class GasSurveyEnv(gym.Env):
         #old_ind_y, old_ind_x = np.argwhere(self.location)[0]
         old_var = self.pred_var_norm_clipped # remember to compare with correct new var  (norm, clipped etc.)
 
-        # expects action to be [-1.0, -1.0] [1.0, 1.0]
-        out_of_bounds = not self.action_space.contains(action)
-        if out_of_bounds:
-            action = np.clip(action, self.action_space.low, self.action_space.high)
+        # expects action to be up, down, left, right
 
-        if self.action_mode[0] == 'absolute':
-            new_xy = ((action + 1.0) / 2.0) * np.array(
-                [self.action_mode[1], self.action_mode[2]], dtype=np.float32
-            )
+        delta_xy = self._action_to_delta(action, self.step_length)
+        new_xy = self.loc[:2].cpu().numpy() + delta_xy
+        if self.debug:
+            print(f'action: {delta_xy} new_xy: {new_xy}', end=' ')
+        out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
+        if out_of_bounds:
+            obs, truncated, info = self._get_obs_truncated_info()
+            reward += -5.0
+            self.acc_reward += reward
+            if self.debug:
+                print(f'out_of_bounds = True')
+            return obs, float(reward), self.terminated, truncated, info
+        else:
             self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
-            if self.debug:
-                print(f'action: {new_xy}', end=' ')
-        else: # action_mode == 'relative' (default)
-            delta_xy = action * np.array([self.action_mode[1], self.action_mode[2]], dtype=np.float32)
-            new_xy = self.loc[:2].cpu().numpy() + delta_xy
-            if self.debug:
-                print(f'action: {delta_xy} new_xy: {new_xy}', end=' ')
-            out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
-            if out_of_bounds:
-                obs, truncated, info = self._get_obs_truncated_info()
-                reward += -5.0
-                self.acc_reward += reward
-                if self.debug:
-                    print(f'out_of_bounds = True')
-                return obs, float(reward), self.terminated, truncated, info
-            else:
-                self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
         
         if self.timer:
             print(f't0 step: {time.process_time()-t}')
@@ -285,7 +273,7 @@ class GasSurveyEnv(gym.Env):
         # Update location
         self.loc = self.new_loc.detach()
         #self.location[old_ind_y, old_ind_x] = 0
-        self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
+        self.make_circle(self.loc[0], self.loc[1], self.location_radius)
 
         #ind_x, ind_y = self.loc_to_ind((self.loc[0].item(), self.loc[1].item()))
         #self.location[ind_y][ind_x] = 255
@@ -324,6 +312,13 @@ class GasSurveyEnv(gym.Env):
     def close():
         pass
     
+    def _action_to_delta(self, a: int, step: int) -> np.ndarray:
+        if   a == 0:   return np.array([ 0, +step])  # up   (y+)
+        elif a == 1:   return np.array([ 0, -step])  # down (y-)
+        elif a == 2:   return np.array([-step, 0])   # left (x-)
+        elif a == 3:   return np.array([+step, 0])   # right(x+)
+        else:          raise ValueError(a)
+
     def loc_to_ind(self, loc: Tuple[float, float]) -> Tuple[int, int]:
         x_idx = min(int(round(loc[0] / (self.env_x_max / self.obs_x))), self.obs_x - 1)
         y_idx = min(int(round(loc[1] / (self.env_y_max / self.obs_y))), self.obs_y - 1)
