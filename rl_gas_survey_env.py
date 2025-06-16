@@ -44,7 +44,7 @@ class GasSurveyEnv(gym.Env):
         # Steps until truncated=True (done)
         self.n_steps = 0
         self.n_episodes = 0
-        self.n_steps_max = 20
+        self.n_steps_max = 100
         self.total_steps = 0
         self.acc_reward = 0.0
         
@@ -108,7 +108,7 @@ class GasSurveyEnv(gym.Env):
 
         self.env_x_max = float(self.env_xy[:, 0].max())
         self.env_y_max = float(self.env_xy[:, 1].max())
-        self.maxdist=((self.env_x_max**2 + self.env_y_max**2)**0.5)
+        self.maxdist=((self.action_mode[1]**2 + self.action_mode[2]**2)**0.5)
 
         # Init observation channels
         self._create_obs_coords()
@@ -221,8 +221,8 @@ class GasSurveyEnv(gym.Env):
             delta_xy = action * np.array([self.action_mode[1], self.action_mode[2]], dtype=np.float32)
             new_xy = self.loc[:2].cpu().numpy() + delta_xy
             if self.debug:
-                print(f'action: {delta_xy}', end=' ')
-            out_of_bounds = (0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max)
+                print(f'action: {delta_xy} new_xy: {new_xy}', end=' ')
+            out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
             if out_of_bounds:
                 obs, truncated, info = self._get_obs_truncated_info()
                 reward += -5.0
@@ -377,11 +377,10 @@ class GasSurveyEnv(gym.Env):
         t = time.process_time()
         #self.mdl.set_train_data(
         #    inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
-        if self.n_steps > 1:
-            # not first prediction, so choose between using fantasy mdl or set_train_data
+        if len(self.mdl.train_targets) > 0:
+            # not first prediction, use fantasy mdl
             self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all).to(self.device)
             self.sample_idx_mdl = self.sample_idx
-            use_self_mdl = True
         else:
             # first prediction must have train data
             self.mdl.set_train_data(

@@ -52,16 +52,10 @@ if device is None:
 #action_mode = {'absolute', 250, 250}
 action_mode = ['relative', 20, 20]
 channels = np.array([0, 1, 0, 0, 0])
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=False, device=device)
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=True, device=device)
 
 buffer_size = 40_000                      # how many transitions
-# replay_buffer = DictReplayBuffer(
-#     buffer_size=buffer_size,
-#     observation_space=env.observation_space,
-#     action_space=env.action_space,
-#     device="cpu",                            # <<< stays on host RAM
-#     optimize_memory_usage=False              # must be False for Dict
-# )
+
 replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
     buffer_size       = buffer_size,
     observation_space = env.observation_space,
@@ -72,10 +66,15 @@ replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
 )
 
 # %%
-parent_dir = "/projects/robin/users/ivarkriw"
+host = socket.gethostname().split('.')[0]
+if host in ['dunder', 'cupid', 'dancer']:
+    parent_dir = "/projects/robin/users/ivarkriw"
+else:
+    parent_dir = '.'
+
 models_parent = parent_dir + "/models"
 logs_parent = parent_dir + "/logs"
-host = socket.gethostname().split('.')[0]
+
 current_dir = f"/{int(time.time())}_{host}"
 models_dir = models_parent + current_dir
 logs_dir = logs_parent + current_dir
@@ -127,21 +126,6 @@ else:
     )
 
     agent.replay_buffer = replay_buffer          # overwrite in place
-    # agent = SAC(
-    #     "CnnPolicy",
-    #     env,
-    #     device=env.device,          # 'cuda', 'mps', or 'cpu'
-    #     buffer_size=4000,        # fewer GP calls than PPO
-    #     batch_size=256,
-    #     learning_rate=3e-4,
-    #     learning_starts=265,
-    #     tau=0.005,                  # target-network smoothing
-    #     train_freq=1,
-    #     gradient_steps=1,           # one GD step per env.step()
-    #     policy_kwargs=policy_kwargs,
-    #     verbose=1,
-    #     tensorboard_log=logdir
-    # )
 
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
