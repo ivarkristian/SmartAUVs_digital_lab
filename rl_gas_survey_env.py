@@ -42,6 +42,7 @@ class GasSurveyEnv(gym.Env):
         self.obs_x, self.obs_y = gp_pred_resolution
 
         # Steps until truncated=True (done)
+        self.n_steps = 0
         self.n_episodes = 0
         self.n_steps_max = 20
         self.total_steps = 0
