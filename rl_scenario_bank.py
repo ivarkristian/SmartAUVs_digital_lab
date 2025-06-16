@@ -35,7 +35,7 @@ class ScenarioBank:
         self.print_data_files()
     
     def print_data_files(self):
-        print(f'Directory {self.data_dir} containts these files of type .nc:\n{self.nc_files}')
+        print(f'Directory {self.data_dir} contains these files of type .nc:\n{self.nc_files}')
         print(f'Run .load_dataset(nc_file) to load a file as a dataset')
         #print(f'Use .convert_files_to_tensors() to save datasets as tensors for RL')
 

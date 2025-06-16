@@ -21,7 +21,7 @@ import chem_utils
 
 # %%
 class GasSurveyEnv(gym.Env):
-    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode={'relative', 250, 250}, channels=None, timer=False, debug=False, device=torch.device("cpu")):
+    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode={'relative', 250, 250}, channels=np.array([0, 1, 0, 1, 1]), timer=False, debug=False, device=torch.device("cpu")):
         super(GasSurveyEnv, self).__init__()
         self.debug = debug
         self.timer = timer
@@ -53,8 +53,7 @@ class GasSurveyEnv(gym.Env):
         # Including coord_x/y channels is a bit dangerous, should
         # randomize direction of scenarios, e.g. rotate by 90/180 deg
         # to avoid 'learning the coordinate system'
-        if channels is None:
-            self.channels = np.array([0, 1, 0, 1, 1])
+        self.channels = channels
 
         self.max_samples = 0
         # reset draws a random scenario, initializes GP model and sample memory
