@@ -219,7 +219,7 @@ class GasSurveyEnv(gym.Env):
                 print(f'action: {new_xy}', end=' ')
         else: # action_mode == 'relative' (default)
             delta_xy = action * np.array([self.action_mode[1], self.action_mode[2]], dtype=np.float32)
-            new_xy = self.loc[:2].numpy() + delta_xy
+            new_xy = self.loc[:2].cpu().numpy() + delta_xy
             if self.debug:
                 print(f'action: {delta_xy}', end=' ')
             out_of_bounds = (0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max)
