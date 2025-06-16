@@ -21,7 +21,7 @@ import chem_utils
 
 # %%
 class GasSurveyEnv(gym.Env):
-    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='relative', timer=False, debug=False, device=torch.device("cpu")):
+    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode={'relative', 250, 250}, channels=None, timer=False, debug=False, device=torch.device("cpu")):
         super(GasSurveyEnv, self).__init__()
         self.debug = debug
         self.timer = timer
@@ -44,6 +44,7 @@ class GasSurveyEnv(gym.Env):
         # Steps until truncated=True (done)
         self.n_episodes = 0
         self.n_steps_max = 20
+        self.total_steps = 0
         self.acc_reward = 0.0
         
         # μ, σ, location, coord‑Y, coord‑X  → 5 possible channels
@@ -51,7 +52,8 @@ class GasSurveyEnv(gym.Env):
         # Including coord_x/y channels is a bit dangerous, should
         # randomize direction of scenarios, e.g. rotate by 90/180 deg
         # to avoid 'learning the coordinate system'
-        self.channels = np.array([0, 1, 0, 1, 1])
+        if channels is None:
+            self.channels = np.array([0, 1, 0, 1, 1])
 
         self.max_samples = 0
         # reset draws a random scenario, initializes GP model and sample memory
@@ -82,6 +84,7 @@ class GasSurveyEnv(gym.Env):
 
         t = time.process_time()
         self.n_episodes += 1
+        self.total_steps += self.n_steps
         self.n_steps = 0
         self.terminated = False
 
@@ -202,23 +205,24 @@ class GasSurveyEnv(gym.Env):
         old_ind_y, old_ind_x = np.argwhere(self.location)[0]
         old_var = self.pred_var_norm_clipped # remember to compare with correct new var  (norm, clipped etc.)
 
-        if self.debug:
-            print(f'action: {action}', end=' ')
-
         # expects action to be [-1.0, -1.0] [1.0, 1.0]
         out_of_bounds = not self.action_space.contains(action)
         if out_of_bounds:
             action = np.clip(action, self.action_space.low, self.action_space.high)
 
-        if self.action_mode == 'absolute':
+        if self.action_mode[0] == 'absolute':
             new_xy = ((action + 1.0) / 2.0) * np.array(
-                [self.env_x_max, self.env_y_max], dtype=np.float32
+                [self.action_mode[1], self.action_mode[2]], dtype=np.float32
             )
             self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
+            if self.debug:
+                print(f'action: {new_xy}', end=' ')
         else: # action_mode == 'relative' (default)
-            delta_xy = action * np.array([self.env_x_max, self.env_y_max], dtype=np.float32)
+            delta_xy = action * np.array([self.action_mode[1], self.action_mode[2]], dtype=np.float32)
             new_xy = self.loc[:2].numpy() + delta_xy
-            out_of_bounds = not self.action_space.contains(new_xy)
+            if self.debug:
+                print(f'action: {delta_xy}', end=' ')
+            out_of_bounds = (0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max)
             if out_of_bounds:
                 obs, truncated, info = self._get_obs_truncated_info()
                 reward += -5.0

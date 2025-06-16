@@ -45,12 +45,11 @@ device = None
 if device is None:
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        #from torch.utils.viz._cycles import warn_tensor_cycles
-        #warn_tensor_cycles()
     else:
         device = torch.device("cpu")
 
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='absolute', timer=False, debug=False, device=device)
+action_mode = {'absolute', 250, 250}
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode=action_mode, timer=False, debug=False, device=device)
 
 buffer_size = 40_000                      # how many transitions
 # replay_buffer = DictReplayBuffer(
@@ -70,7 +69,14 @@ replay_buffer = rl_gas_survey_env.CpuDictReplayBuffer(
 )
 
 # %%
+parent_dir = "/projects/robin/users/ivarkriw"
+models_parent = parent_dir + "/models"
+logs_parent = parent_dir + "/logs"
 host = socket.gethostname().split('.')[0]
+current_dir = f"/{int(time.time())}_{host}"
+models_dir = models_parent + current_dir
+logs_dir = logs_parent + current_dir
+
 load = False
 if load:
     load_time = '1749667471'
@@ -87,15 +93,13 @@ if load:
 
     print(f'Loaded model from {models_dir}/{load_model}')
 else:
-    models_dir = f"models/{int(time.time())}_{host}/"
-    logdir = f"logs/{int(time.time())}_{host}/"
     save_prefix = '0_'
 
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
 
-    if not os.path.exists(logdir):
-        os.makedirs(logdir)
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
 
 #    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=256))
     policy_kwargs = dict(
@@ -116,7 +120,7 @@ else:
         gradient_steps=1,
         policy_kwargs=policy_kwargs,
         verbose=1,
-        tensorboard_log=logdir
+        tensorboard_log=logs_dir
     )
 
     agent.replay_buffer = replay_buffer          # overwrite in place
@@ -149,7 +153,7 @@ while True:
         tb_log_name=f'SAC'
         )
     #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
-    agent.save(f"{models_dir}/{save_prefix}{env.n_episodes}")
+    agent.save(f"{models_dir}/{save_prefix}{env.total_steps}")
     agent.save_replay_buffer(f"{models_dir}/buffer.pkl")
 
 # %%
