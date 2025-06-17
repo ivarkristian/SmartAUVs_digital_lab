@@ -54,7 +54,7 @@ action_mode = ['relative', 20, 20]
 channels = np.array([0, 1, 0, 0, 0])
 env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=False, device=device)
 
-buffer_size = 40_000                      # how many transitions
+buffer_size = 400_000                      # how many transitions
 
 replay_buffer = rl_gas_survey_discrete_env.CpuDictReplayBuffer(
     buffer_size       = buffer_size,
@@ -104,7 +104,7 @@ else:
 
 #    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=256))
     policy_kwargs = dict(
-        features_extractor_class=rl_gas_survey_env.MapPlusLocExtractor,
+        features_extractor_class=rl_gas_survey_discrete_env.MapPlusLocExtractor,
         features_extractor_kwargs=dict(features_dim=512),
     )
 
@@ -112,7 +112,7 @@ else:
         "MultiInputPolicy",
         env,                        # env returns {"map": ..., "loc": ...}
         device=env.device,
-        buffer_size=40000,
+        buffer_size=buffer_size,
         batch_size=256,
         learning_rate=3e-4,
         learning_starts=256,
