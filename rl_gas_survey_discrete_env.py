@@ -151,7 +151,7 @@ class GasSurveyDiscEnv(gym.Env):
         
         # Init sample memory. Could include lawnmower path samples.
         self.max_samples_old = self.max_samples
-        self.max_samples = int(self.maxdist*self.n_steps_max)
+        self.max_samples = int(self.maxdist*(self.n_steps_max + 1))
         self.sample_idx = 0
         self.sample_idx_mdl = 0
 
@@ -178,7 +178,7 @@ class GasSurveyDiscEnv(gym.Env):
 
         #ind_x, ind_y = self.loc_to_ind((loc_x, loc_y))
         #self.location[ind_y, ind_x] = 255
-        self.make_circle(self.loc[0], self.loc[1], self.location_radius)
+        self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
 
         # Init prediction tensors
         self.pred_mu = np.zeros((self.obs_y, self.obs_x), dtype=np.float32)
@@ -211,7 +211,7 @@ class GasSurveyDiscEnv(gym.Env):
         delta_xy = self._action_to_delta(action, self.step_length)
         new_xy = self.loc[:2].cpu().numpy() + delta_xy
         if self.debug:
-            print(f'action: {delta_xy} new_xy: {new_xy}', end=' ')
+            print(f'step: {self.n_steps} action: {delta_xy} new_xy: {new_xy}', end=' ')
         out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
         if out_of_bounds:
             obs, truncated, info = self._get_obs_truncated_info()
@@ -258,7 +258,7 @@ class GasSurveyDiscEnv(gym.Env):
 
         end_idx = self.sample_idx + len(sample_coords_xy)
         if end_idx > self.max_samples:
-            raise RuntimeError(f"Exceeded maximum number of samples ({self.max_samples})")
+            raise RuntimeError(f"Exceeded maximum number of samples ({end_idx} > {self.max_samples})")
 
         # Store new samples into the preallocated tensors
         self.sampled_coords[self.sample_idx:end_idx] = torch.as_tensor(sample_coords_xy, device=self.device, dtype=self.sampled_coords.dtype)
@@ -273,7 +273,7 @@ class GasSurveyDiscEnv(gym.Env):
         # Update location
         self.loc = self.new_loc.detach()
         #self.location[old_ind_y, old_ind_x] = 0
-        self.make_circle(self.loc[0], self.loc[1], self.location_radius)
+        self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
 
         #ind_x, ind_y = self.loc_to_ind((self.loc[0].item(), self.loc[1].item()))
         #self.location[ind_y][ind_x] = 255

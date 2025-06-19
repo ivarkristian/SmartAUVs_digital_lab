@@ -14,7 +14,7 @@ import numpy as np
 
 import importlib
 import torch
-from stable_baselines3 import SAC
+from stable_baselines3 import DQN
 #from stable_baselines3.common.buffers import DictReplayBuffer
 
 import time
@@ -54,7 +54,7 @@ action_mode = ['relative', 20, 20]
 channels = np.array([0, 1, 0, 0, 0])
 env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=False, device=device)
 
-buffer_size = 400_000                      # how many transitions
+buffer_size = 800_000                      # how many transitions
 
 replay_buffer = rl_gas_survey_discrete_env.CpuDictReplayBuffer(
     buffer_size       = buffer_size,
@@ -86,7 +86,7 @@ if load:
     save_prefix = '1_'
     models_dir = f"{models_parent}/{load_time}"
 
-    agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
+    agent = DQN.load(f"{models_dir}/{load_model}", env=env, device=env.device)
     try:
         agent.load_replay_buffer(f"{models_dir}/buffer.pkl")
     except:
@@ -108,7 +108,7 @@ else:
         features_extractor_kwargs=dict(features_dim=512),
     )
 
-    agent = SAC(
+    agent = DQN(
         "MultiInputPolicy",
         env,                        # env returns {"map": ..., "loc": ...}
         device=env.device,
@@ -136,7 +136,7 @@ while True:
         total_timesteps=TIMESTEPS, 
         reset_num_timesteps=False, 
         log_interval=30,
-        tb_log_name=f'SAC'
+        tb_log_name=f'DQN'
         )
     #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
     agent.save(f"{models_dir}/{save_prefix}{env.total_steps}")

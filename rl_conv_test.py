@@ -1,5 +1,6 @@
 # %%
 import torch
+import numpy as np
 from stable_baselines3 import SAC
 import importlib
 
@@ -20,12 +21,14 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 
 # %%
 env_device = torch.device("cpu")
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode='absolute', timer=False, debug=True, device=env_device)
+action_mode = ['relative', 20, 20]
+channels = np.array([0, 1, 0, 0, 0])
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=True, device=env_device)
 
 # %%
-load_time = '1749488972'
-load_model = '0_1992.zip'
-models_dir = f"models/{load_time}/"
+#load_time = '1749488972'
+load_model = '1_1360800'
+models_dir = f"models"
 
 agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
 
@@ -41,5 +44,5 @@ while not done:
 env.plot_env(x=env._coord_x, y=env._coord_y, c=env.pred_var_norm)
 
 # %%
-env.plot_env(x=env._coord_x, y=env._coord_y, c=env.pred_var, path=env.sampled_coords)
+env.plot_env(x=env._coord_x, y=env._coord_y, c=env.pred_var, path=env.sampled_coords[:env.sample_idx])
 # %%
