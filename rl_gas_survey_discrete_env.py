@@ -282,7 +282,7 @@ class GasSurveyDiscEnv(gym.Env):
         if self.debug:
             print(f'old_var.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
 
-        var_red = (old_var.mean() - self.pred_var_norm.mean())/old_var.mean()
+        var_red = (old_var.mean() - self.pred_var_norm.mean())/3.2#3.2 is max possible reward for step length 20#old_var.mean()
         r_var = var_red # reward for reducing variance
         #r_var = var_red/float(len(sample_coords_xy)*0.0694)
         r_dist = -0.1 # step penalty (for changing course)
@@ -290,10 +290,10 @@ class GasSurveyDiscEnv(gym.Env):
 
         if self.pred_var.mean() <= 90:
             #r_term = self.n_steps_max - self.n_steps
-            r_term = 1.0
+            r_term = 10.0
             self.terminated = True
         
-        reward += self.a_var*r_var + self.a_dist*r_dist + r_term
+        reward += np.tanh(self.a_var*r_var + self.a_dist*r_dist) + r_term
 
         obs, truncated, info = self._get_obs_truncated_info()
         self.acc_reward += reward
@@ -469,13 +469,13 @@ class GasSurveyDiscEnv(gym.Env):
     def _get_cached_grid(self, x_max: float, y_max: float) -> torch.Tensor:
         """Return (H*W,2) tensor on self.device; cache between envs."""
         key = (x_max, y_max, self.obs_x, self.obs_y, self.device.type)
-        if key not in GasSurveyEnv._grid_cache:
+        if key not in GasSurveyDiscEnv._grid_cache:
             xs = torch.linspace(0, x_max, self.obs_x, device=self.device)
             ys = torch.linspace(0, y_max, self.obs_y, device=self.device)
             gx, gy = torch.meshgrid(ys, xs, indexing="ij")  # (H,W)
             grid = torch.stack((gx, gy), dim=-1).view(-1, 2)  # (H*W,2)
-            GasSurveyEnv._grid_cache[key] = grid
-        return GasSurveyEnv._grid_cache[key]
+            GasSurveyDiscEnv._grid_cache[key] = grid
+        return GasSurveyDiscEnv._grid_cache[key]
 
     #@profile
     def _create_obs_coords(self):
