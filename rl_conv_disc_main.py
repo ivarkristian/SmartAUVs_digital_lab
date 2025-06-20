@@ -51,7 +51,7 @@ if device is None:
 
 #action_mode = {'absolute', 250, 250}
 action_mode = ['relative', 20, 20]
-channels = np.array([0, 1, 0, 0, 0])
+channels = np.array([1, 1, 0, 1, 1])
 env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[2.0, 3.0], channels=channels, action_mode=action_mode, timer=False, debug=False, device=device)
 
 buffer_size = 800_000                      # how many transitions

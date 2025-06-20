@@ -17,6 +17,15 @@ import path
 import chem_utils
 
 # %%
+# Disable LaTeX rendering to avoid the need for an external LaTeX installation
+# Use MathText for LaTeX-like font rendering
+plt.rcParams.update({
+    "text.usetex": False,  # Disable external LaTeX usage
+    "font.family": "Dejavu Serif",  # Use a serif font that resembles LaTeX's default
+    "mathtext.fontset": "dejavuserif"  # Use DejaVu Serif font for mathtext, similar to LaTeX fonts
+})
+
+# %%
 # Definitions
 
 # %%
