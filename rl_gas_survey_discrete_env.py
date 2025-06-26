@@ -1,6 +1,7 @@
 from memory_profiler import profile
 import gpytorch.constraints
 import torch
+from torchinfo import summary
 import gpytorch
 import gc
 import numpy as np
@@ -116,8 +117,8 @@ class GasSurveyDiscEnv(gym.Env):
 
         self.pred_mu_norm = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
         self.pred_mu_norm_clipped = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
-        self.pred_var_norm = np.zeros_like(self.pred_mu_norm) + self.sigma2_all
-        self.pred_var_norm_clipped = np.zeros_like(self.pred_mu_norm) + self.sigma2_all
+        self.pred_var_norm = np.zeros_like(self.pred_mu_norm) + 255#self.sigma2_all
+        self.pred_var_norm_clipped = np.zeros_like(self.pred_mu_norm) + 255#self.sigma2_all
         self.location = np.zeros_like(self.pred_mu_norm)
 
         # Init GP model
@@ -204,14 +205,15 @@ class GasSurveyDiscEnv(gym.Env):
         start_time = '2020-01-01T02:10:00.000000000' # dummy time
         synoptic = True
         #old_ind_y, old_ind_x = np.argwhere(self.location)[0]
-        old_var = self.pred_var_norm_clipped # remember to compare with correct new var  (norm, clipped etc.)
+        old_var = self.pred_var_norm # remember to compare with correct new var  (norm, clipped etc.)
 
         # expects action to be up, down, left, right
 
         delta_xy = self._action_to_delta(action, self.step_length)
-        new_xy = self.loc[:2].cpu().numpy() + delta_xy
+        noise = self._delta_add_noise(delta_xy, self.step_length)
+        new_xy = self.loc[:2].cpu().numpy() + delta_xy + noise
         if self.debug:
-            print(f'step: {self.n_steps} action: {delta_xy} new_xy: {new_xy}', end=' ')
+            print(f'step: {self.n_steps} action: {delta_xy} ({noise}) new_xy: {new_xy}', end=' ')
         out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
         if out_of_bounds:
             obs, truncated, info = self._get_obs_truncated_info()
@@ -282,10 +284,10 @@ class GasSurveyDiscEnv(gym.Env):
         if self.debug:
             print(f'old_var.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
 
-        var_red = (old_var.mean() - self.pred_var_norm.mean())/3.2#3.2 is max possible reward for step length 20#old_var.mean()
+        var_red = min(2.0, (old_var.mean() - self.pred_var_norm.mean()))#2.0 is max possible reward for step length 20
         r_var = var_red # reward for reducing variance
         #r_var = var_red/float(len(sample_coords_xy)*0.0694)
-        r_dist = -0.1 # step penalty (for changing course)
+        r_dist = -1.0 # step penalty (for changing course)
         r_term = 0.0
 
         if self.pred_var.mean() <= 90:
@@ -293,7 +295,7 @@ class GasSurveyDiscEnv(gym.Env):
             r_term = 10.0
             self.terminated = True
         
-        reward += np.tanh(self.a_var*r_var + self.a_dist*r_dist) + r_term
+        reward += self.a_var*r_var + self.a_dist*r_dist + r_term
 
         obs, truncated, info = self._get_obs_truncated_info()
         self.acc_reward += reward
@@ -318,6 +320,12 @@ class GasSurveyDiscEnv(gym.Env):
         elif a == 2:   return np.array([-step, 0])   # left (x-)
         elif a == 3:   return np.array([+step, 0])   # right(x+)
         else:          raise ValueError(a)
+    
+    def _delta_add_noise(self, delta_xy, step, max_percentage=0.05):
+        max_noise = max_percentage * step
+        x_noise = random.random() * max_noise * 2 # CONTINUE HERE
+        delta_xy_noise = random.random() * max_percentage * step + np.zeros_like(delta_xy)
+        return delta_xy_noise
 
     def loc_to_ind(self, loc: Tuple[float, float]) -> Tuple[int, int]:
         x_idx = min(int(round(loc[0] / (self.env_x_max / self.obs_x))), self.obs_x - 1)
@@ -568,6 +576,20 @@ class GasSurveyDiscEnv(gym.Env):
 
         return fig, ax
 
+def get_q_values(model, obs):
+    """
+    Return the Q-value vector (one value per discrete action) for a single observation.
+    """
+    # 1. Convert raw obs (np array, dict, …) to a batched torch.Tensor on the
+    #    same device as the policy
+    obs_tensor, _ = model.policy.obs_to_tensor(obs)
+
+    # 2. Extract features (CNN/MLP) exactly as the policy does
+    with torch.no_grad():
+        q_values = model.policy.q_net(obs_tensor)          # shape (1, n_actions)
+
+    return q_values.cpu().numpy().squeeze(0)             # -> (n_actions,)
+
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureCNN
 
 class MapPlusLocExtractor(BaseFeaturesExtractor):
@@ -606,3 +628,44 @@ class CpuDictReplayBuffer(DictReplayBuffer):
         if target_device is not None:
             batch = self._to_device(batch, target_device)
         return batch
+
+def show_conv3_maps(model, obs):
+    conv3 = model.policy.q_net.features_extractor.cnn.cnn[4]  # 3rd Conv2d
+    feature_bank = {}
+    def _save_features(_, __, output):
+        feature_bank["conv3"] = output.detach().cpu()
+    h = conv3.register_forward_hook(_save_features)
+
+    # ---- 3. forward pass through the extractor -----------------------
+    obs_tensor, _ = model.policy.obs_to_tensor(obs)
+    with torch.no_grad():
+        _ = model.policy.q_net.features_extractor(obs_tensor)
+
+    h.remove()
+    # fmap from the forward hook: shape (1, 64, 9, 9)
+    fmap = feature_bank["conv3"].squeeze(0)          # (64, 9, 9)  remove batch dim
+
+    # per-channel activation energy
+    energy = fmap.abs().mean(dim=(1, 2)).cpu().numpy()   # (64,)
+
+    # bar plot
+    channels = np.arange(len(energy))        # x-positions: 0 … 63
+    fig, axes = plt.subplots(1, 1, figsize=(4.5, 2.0), dpi=300)
+    axes.bar(channels, energy, width=0.8)
+    plt.xlabel("Channel", fontsize=8)
+    plt.ylabel("mean |activation|", fontsize=8)
+    axes.tick_params(axis="both", labelsize=7)
+    plt.tight_layout()
+    plt.show()
+
+    # Top activation channels
+    k = 9
+    top_idx = energy.argsort()[-k:]
+    rows = int(np.ceil(np.sqrt(k)))
+    fig, axes = plt.subplots(rows, rows, figsize=(rows*2, rows*2))
+
+    for ax, idx in zip(axes.flat, top_idx):
+        ax.imshow(fmap[idx], cmap="inferno")
+        ax.set_title(f"ch {idx}", fontsize=6)
+        ax.axis("off")
+    plt.tight_layout(); plt.show()
