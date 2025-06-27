@@ -4,6 +4,7 @@ import torch
 from torchinfo import summary
 import gpytorch
 import gc
+import math
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
@@ -59,6 +60,7 @@ class GasSurveyDiscEnv(gym.Env):
         self.channels = channels
 
         self.max_samples = 0
+        self.location_noise = 0.05
         self.location_radius = self.ls_const.upper_bound.item()
         # reset draws a random scenario, initializes GP model and sample memory
         obs, _ = self.reset()
@@ -109,7 +111,7 @@ class GasSurveyDiscEnv(gym.Env):
 
         self.env_x_max = float(self.env_xy[:, 0].max())
         self.env_y_max = float(self.env_xy[:, 1].max())
-        self.maxdist=self.action_mode[1]
+        self.maxdist=math.sqrt((self.action_mode[1] * (1 + self.location_noise))**2 + (self.action_mode[1]*self.location_noise)**2)
 
         # Init observation channels
         self._create_obs_coords()
@@ -323,9 +325,10 @@ class GasSurveyDiscEnv(gym.Env):
     
     def _delta_add_noise(self, delta_xy, step, max_percentage=0.05):
         max_noise = max_percentage * step
-        x_noise = random.random() * max_noise * 2 # CONTINUE HERE
-        delta_xy_noise = random.random() * max_percentage * step + np.zeros_like(delta_xy)
-        return delta_xy_noise
+        x_noise = (random.random() - 0.5)*2 * max_noise
+        y_noise = (random.random() - 0.5)*2 * max_noise
+        
+        return np.array([x_noise, y_noise])
 
     def loc_to_ind(self, loc: Tuple[float, float]) -> Tuple[int, int]:
         x_idx = min(int(round(loc[0] / (self.env_x_max / self.obs_x))), self.obs_x - 1)
