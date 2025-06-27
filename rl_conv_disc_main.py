@@ -69,8 +69,10 @@ replay_buffer = rl_gas_survey_discrete_env.CpuDictReplayBuffer(
 host = socket.gethostname().split('.')[0]
 if host in ['dunder', 'cupid', 'dancer', 'rudolph', 'dasher']:
     parent_dir = "/projects/robin/users/ivarkriw"
+    log_interval = 300
 else:
     parent_dir = '.'
+    log_interval = 30
 
 models_parent = parent_dir + "/models"
 logs_parent = parent_dir + "/logs"
@@ -129,13 +131,14 @@ else:
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
 #torch.cuda.memory._record_memory_history()
-TIMESTEPS = 2400
+#TIMESTEPS = 2400
+TIMESTEPS = 10000
 
 while True:
     agent.learn(
         total_timesteps=TIMESTEPS, 
         reset_num_timesteps=False, 
-        log_interval=30,
+        log_interval=log_interval,
         tb_log_name=f'DQN'
         )
     #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
