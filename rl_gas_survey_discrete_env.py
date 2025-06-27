@@ -22,7 +22,7 @@ import chem_utils
 
 # %%
 class GasSurveyDiscEnv(gym.Env):
-    def __init__(self, scenario_bank, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode={'relative', 250, 250}, channels=np.array([0, 1, 0, 1, 1]), timer=False, debug=False, device=torch.device("cpu")):
+    def __init__(self, scenario_bank=None, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], action_mode={'relative', 250, 250}, channels=np.array([0, 1, 0, 1, 1]), timer=False, debug=False, device=torch.device("cpu")):
         super(GasSurveyDiscEnv, self).__init__()
         self.debug = debug
         self.timer = timer
@@ -33,6 +33,10 @@ class GasSurveyDiscEnv(gym.Env):
         
         self.device = device
         # Load scenario bank
+        if not scenario_bank:
+            print(f"You have to provide a scenario bank!")
+            return
+        
         self.scenario_bank = scenario_bank
         self.min_concentration, self.max_concentration = map(
             float, self.scenario_bank.get_minmax()
@@ -91,19 +95,20 @@ class GasSurveyDiscEnv(gym.Env):
         self.terminated = False
 
         # Draw a random scenario/snapshot
-        random_env = self.scenario_bank.sample()
+        rotation = random.choice([-90, 0, 90, 180])
+        random_scenario = self.scenario_bank.sample()
 
-        self.env_xy = random_env['coords'].to(self.device)
-        self.values = random_env['values'].to(self.device)
+        self.env_xy = self._rotate_xy(random_scenario['coords'].to(self.device), rotation)
+        self.values = random_scenario['values'].to(self.device)
         self.env_x_np = self.env_xy[:, 0].cpu().numpy()
         self.env_y_np = self.env_xy[:, 1].cpu().numpy()
         self.env_vals_np = self.values.cpu().numpy()
 
-        self.parameter = random_env['parameter']
-        self.depth = random_env['depth']
-        self.time = random_env['time']
-        self.cur_dir = random_env['cur_dir']
-        self.cur_str = random_env['cur_str']
+        self.parameter = random_scenario['parameter']
+        self.depth = random_scenario['depth']
+        self.time = random_scenario['time']
+        self.cur_dir = random_scenario['cur_dir'] + rotation
+        self.cur_str = random_scenario['cur_str']
 
         if self.debug:
             print(f"Sampled env '{self.parameter}', depth {self.depth}', time {self.time}")
@@ -291,7 +296,7 @@ class GasSurveyDiscEnv(gym.Env):
         r_dist = -1.0 # step penalty (for changing course)
         r_term = 0.0
 
-        if self.pred_var.mean() <= 90:
+        if self.pred_var.mean() <= 100:
             #r_term = self.n_steps_max - self.n_steps
             r_term = 10.0
             self.terminated = True
@@ -333,6 +338,29 @@ class GasSurveyDiscEnv(gym.Env):
         x_idx = min(int(round(loc[0] / (self.env_x_max / self.obs_x))), self.obs_x - 1)
         y_idx = min(int(round(loc[1] / (self.env_y_max / self.obs_y))), self.obs_y - 1)
         return x_idx, y_idx
+    
+    def _rotate_xy(self, env_xy: torch.Tensor, d: float | int) -> torch.Tensor:
+        """
+        Rotate 2-D coordinates `env_xy` by `d` degrees **clockwise**.
+
+        Returns
+        -------
+        rotated : (N, 2) torch.Tensor
+            Rotated coordinates, same dtype and device as `env_xy`.
+        """
+        t = torch.tensor([env_xy[:, 0].mean(), env_xy[:, 1].mean()], device=env_xy.device)
+        env_xy_zero_translated = env_xy - t
+        # ensure float dtype on the same device as the input
+        theta = torch.deg2rad(torch.as_tensor(d, dtype=env_xy.dtype,
+                                            device=env_xy.device))
+
+        c, s = torch.cos(theta), torch.sin(theta)
+        rot_mat = torch.stack((torch.stack(( c,  -s)),
+                            torch.stack((s,  c))))
+        
+        env_xy_rot = env_xy_zero_translated @ rot_mat.T
+
+        return env_xy_rot + t
 
     def _get_obs_truncated_info(self):
         layers_uint8  = self._render_layers()
@@ -574,7 +602,7 @@ class GasSurveyDiscEnv(gym.Env):
         # Add labels and title
         ax.set_xlabel('Easting [m]')
         ax.set_ylabel('Northing [m]')
-        ax.set_title(f"Time {self.time}, {self.parameter} at {self.depth}m depth ()")
+        ax.set_title(f"Time {self.time}, {self.parameter} at -{self.depth}m. ({self.cur_str:.2}m/s @ {round(self.cur_dir)} deg)")
 
         return fig, ax
 

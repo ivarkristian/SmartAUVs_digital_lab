@@ -117,8 +117,8 @@ else:
         learning_rate=3e-4,
         learning_starts=256,
         tau=0.005,
-        train_freq=4,
-        gradient_steps=1,
+        train_freq=(1, 'episode'),
+        gradient_steps=-1,
         policy_kwargs=policy_kwargs,
         verbose=1,
         tensorboard_log=logs_dir
