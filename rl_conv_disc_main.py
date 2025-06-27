@@ -67,7 +67,7 @@ replay_buffer = rl_gas_survey_discrete_env.CpuDictReplayBuffer(
 
 # %%
 host = socket.gethostname().split('.')[0]
-if host in ['dunder', 'cupid', 'dancer']:
+if host in ['dunder', 'cupid', 'dancer', 'rudolph', 'dasher']:
     parent_dir = "/projects/robin/users/ivarkriw"
 else:
     parent_dir = '.'
