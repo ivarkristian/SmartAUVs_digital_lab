@@ -1,7 +1,6 @@
 from memory_profiler import profile
 import gpytorch.constraints
 import torch
-from torchinfo import summary
 import gpytorch
 import gc
 import math
