@@ -30,7 +30,8 @@ env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100,
 
 # %%
 #load_time = '1749488972'
-load_model = '0_1281600'
+#load_model = '0_1929600'
+load_model = '0_3285600'
 models_dir = f"models"
 
 #agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
@@ -55,7 +56,7 @@ while not done:
 q_values = np.vstack(q_values)
 
 # %%
-env.plot_env(x=env._coord_x, y=env._coord_y, c=env.pred_var, path=env.sampled_coords[:env.sample_idx])
+env.plot_env(x=env._coord_x, y=env._coord_y, c=env.pred_var_norm, path=env.sampled_coords[:env.sample_idx])
 
 q_act = ['up', 'down', 'left', 'right']
 fig, ax = plt.subplots(figsize=(4.5, 2.2), dpi=300)   # fits two-column journals
