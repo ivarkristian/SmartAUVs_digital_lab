@@ -54,7 +54,7 @@ action_mode = ['relative', 20, 20]
 channels = np.array([0, 1, 0, 0, 0])
 env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=False, device=device)
 
-buffer_size = 800_000                      # how many transitions
+buffer_size = 200_000                      # how many transitions
 
 replay_buffer = rl_gas_survey_discrete_env.CpuDictReplayBuffer(
     buffer_size       = buffer_size,
@@ -115,11 +115,11 @@ else:
         env,                        # env returns {"map": ..., "loc": ...}
         device=env.device,
         buffer_size=buffer_size,
-        batch_size=256,
-        learning_rate=3e-3,
-        learning_starts=256,
-        tau=0.005,
-        train_freq=4,
+        batch_size=512,
+        learning_rate=4e-3,
+        learning_starts=512,
+        tau=1.0,#0.005,
+        train_freq=1,
         gradient_steps=1,
         policy_kwargs=policy_kwargs,
         verbose=1,
