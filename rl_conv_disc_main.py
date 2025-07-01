@@ -115,9 +115,9 @@ else:
         env,                        # env returns {"map": ..., "loc": ...}
         device=env.device,
         buffer_size=buffer_size,
-        batch_size=512,
+        batch_size=256,
         learning_rate=3e-4,
-        learning_starts=512,
+        learning_starts=256,
         tau=0.005,
         train_freq=4,
         gradient_steps=1,
