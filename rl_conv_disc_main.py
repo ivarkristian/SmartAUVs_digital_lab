@@ -116,7 +116,7 @@ else:
         device=env.device,
         buffer_size=buffer_size,
         batch_size=512,
-        learning_rate=4e-3,
+        learning_rate=3e-4,
         learning_starts=512,
         tau=1.0,#0.005,
         train_freq=1,
