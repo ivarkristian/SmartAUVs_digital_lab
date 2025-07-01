@@ -31,7 +31,8 @@ env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100,
 # %%
 #load_time = '1749488972'
 #load_model = '0_1929600'
-load_model = '0_3285600'
+#load_model = '0_3285600'
+load_model = '0_2191200'
 models_dir = f"models"
 
 #agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)

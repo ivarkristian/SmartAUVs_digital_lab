@@ -69,7 +69,7 @@ replay_buffer = rl_gas_survey_discrete_env.CpuDictReplayBuffer(
 host = socket.gethostname().split('.')[0]
 if host in ['dunder', 'cupid', 'dancer', 'rudolph', 'dasher']:
     parent_dir = "/projects/robin/users/ivarkriw"
-    log_interval = 300
+    log_interval = 100
 else:
     parent_dir = '.'
     log_interval = 30
@@ -118,8 +118,8 @@ else:
         batch_size=512,
         learning_rate=3e-4,
         learning_starts=512,
-        tau=1.0,#0.005,
-        train_freq=1,
+        tau=0.005,
+        train_freq=4,
         gradient_steps=1,
         policy_kwargs=policy_kwargs,
         verbose=1,

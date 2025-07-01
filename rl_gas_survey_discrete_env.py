@@ -296,9 +296,9 @@ class GasSurveyDiscEnv(gym.Env):
         r_dist = -1.0 # step penalty (for changing course)
         r_term = 0.0
 
-        if self.pred_var.mean() <= 100:
+        if self.pred_var_norm.mean() <= 100:
             #r_term = self.n_steps_max - self.n_steps
-            r_term = 10.0
+            r_term = 5.0
             self.terminated = True
         
         reward += self.a_var*r_var + self.a_dist*r_dist + r_term
