@@ -25,6 +25,29 @@ def argmax_all(a: np.ndarray) -> np.ndarray:
     max_val = a.max()               # global maximum
     return np.argwhere(a == max_val)
 
+def plot_n(x, y, data_list, titles=None, x_range=(0, 250), y_range=(0, 250), path=None):
+    fig_combined, axes = plt.subplots(1, len(data_list), figsize=(2+5*len(data_list), 5))
+    axes = axes.flatten()
+    for i, ax in enumerate(axes):
+        sc = ax.scatter(x, y,
+                    c=data_list[i],
+                    cmap="coolwarm",
+                    s=1)
+        if path is not None:
+            ax.scatter(path[:, 0], path[:, 1], c='black', s=1)
+
+        ax.set_xlim(*x_range)
+        ax.set_ylim(*y_range)
+        ax.set_xlabel('Easting [m]')
+        if not i:
+            ax.set_ylabel('Northing [m]')
+        ax.set_title(titles[i])
+    
+        cbar = fig_combined.colorbar(sc, ax=ax)
+        cbar.set_label('Value')
+    
+    plt.show()
+
 def plot_env(env,
              *,                     # force keyword use
              x=None, y=None, c=None,
@@ -87,8 +110,8 @@ def plot_env(env,
 def compare_envs(envs,
                  *,
                  env_names = ['Env1', 'Env2', 'Env3'],
-                 mean_attr  ="pred_mu_norm",      # attribute names on the env
-                 var_attr   ="pred_var_norm",
+                 mean_attr  ="pred_mu_norm_clipped",      # attribute names on the env
+                 var_attr   ="pred_var_norm_clipped",
                  path = False,    # optional
                  data_min=0, data_max=255,
                  cmap="coolwarm",
@@ -202,26 +225,25 @@ class adaptive_agents():
             case 'IG':
                 # Highest entropy reduction, in practice go to location with max variance
                 # If multiple locations are tied, go to nearest
-
-                best_value_idx = self._get_best_value_idx(self.var)
+                self.map = self.var
 
             case 'UCB':
                 # Balances entropy reduction with sampling of high concentrations
                 # If multiple locations are tied, go to nearest
-
-                ucb = self.gas + self.var * self.kappa
-                best_value_idx = self._get_best_value_idx(ucb)
+                self.gas_scaled = np.clip(self.gas * self.kappa, 0, 255)
+                self.map = self.gas_scaled + self.var
 
             case 'DUCB':
                 # Balances entropy reduction with sampling of high concentrations
                 # and distance
                 # If multiple locations are tied, go to nearest
-                ducb = self.gas + self.var * self.kappa + self.dist * self.gamma
-                best_value_idx = self._get_best_value_idx(ducb)
+                self.gas_scaled = np.clip(self.gas * self.kappa, 0, 255)
+                self.map = self.gas_scaled + self.var + self.dist * self.gamma
 
             case _:
                 print(f'{self.type} agent not implemented')
         
+        best_value_idx = self._get_best_value_idx(self.map)
         action = (self._coords[best_value_idx]/[self.x_max, self.y_max]) * 2.0 - 1
         if self.debug:
             print(f'Found {self.type} action: {action}')

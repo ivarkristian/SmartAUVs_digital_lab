@@ -34,7 +34,7 @@ ucb_env = copy.deepcopy(env)
 ducb_env = copy.deepcopy(env)
 
 # %%
-kappa = 1.0
+kappa = 255/20.0
 gamma = -1.0
 ig_ag = agents.adaptive_agents(type='IG', obs=obs, debug=False)
 ucb_ag = agents.adaptive_agents(type='UCB', obs=obs, kappa=kappa, debug=False)
@@ -44,10 +44,10 @@ ducb_ag = agents.adaptive_agents(type='DUCB', obs=obs, kappa=kappa, gamma=gamma,
 ig_action = ig_ag.get_action(obs=obs)
 ucb_action = ucb_ag.get_action(obs=obs)
 ducb_action = ducb_ag.get_action(obs=obs)
+n_samples_lim = 1000
 
 # %%
 # Sample up to at least n_samples_lim samples
-n_samples_lim = 1000
 while ig_env.sample_idx < n_samples_lim:
     ig_action = ig_ag.get_action(ig_env.step(ig_action))
 ig_env.sample_idx = n_samples_lim
@@ -58,8 +58,11 @@ while ucb_env.sample_idx < n_samples_lim:
 ucb_env.sample_idx = n_samples_lim
 ucb_env._estimate()
 
+# %%
 while ducb_env.sample_idx < n_samples_lim:
     ducb_action = ducb_ag.get_action(ducb_env.step(ducb_action))
+    agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_env.pred_mu, ducb_env.pred_mu_norm_clipped], titles=["pred_mu", "pred_mu_norm_clipped"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
+    agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_ag.gas_scaled, ducb_ag.map], titles=["gas_scaled", "ducb map"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
 ducb_env.sample_idx = n_samples_lim
 ducb_env._estimate()
 
@@ -80,7 +83,7 @@ for _ in range(n_actions):
 # %%
 env.plot_env(x=env.env_x_np, y=env.env_y_np, c=env.env_vals_np)
 
-agents.compare_envs([ig_env, ucb_env, ducb_env], env_names=['IG', 'UCB', 'DUCB'], path=True)
+agents.compare_envs([ig_env, ucb_env, ducb_env], env_names=['IG', 'UCB', 'DUCB'], mean_attr="pred_mu_norm_clipped", path=True)
 
 # %%
 # Plot all samples
