@@ -27,7 +27,10 @@ def argmax_all(a: np.ndarray) -> np.ndarray:
 
 def plot_n(x, y, data_list, titles=None, x_range=(0, 250), y_range=(0, 250), path=None):
     fig_combined, axes = plt.subplots(1, len(data_list), figsize=(2+5*len(data_list), 5))
-    axes = axes.flatten()
+    if len(data_list) > 1:
+        axes = axes.flatten()
+    else:
+        axes = [axes]
     for i, ax in enumerate(axes):
         sc = ax.scatter(x, y,
                     c=data_list[i],
@@ -41,7 +44,9 @@ def plot_n(x, y, data_list, titles=None, x_range=(0, 250), y_range=(0, 250), pat
         ax.set_xlabel('Easting [m]')
         if not i:
             ax.set_ylabel('Northing [m]')
-        ax.set_title(titles[i])
+        
+        if titles is not None:
+            ax.set_title(titles[i])
     
         cbar = fig_combined.colorbar(sc, ax=ax)
         cbar.set_label('Value')

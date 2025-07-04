@@ -1,11 +1,4 @@
 # %%
-# 1. Train CNN for area coverage using only variance channel - implement
-# the prediction inside the environment
-# 2. Include ScenarioBank class to help generalize learning
-# 3. Test reward based on correctness of prediction mean vs. rewards for
-# exploration and exploitation
-
-# %%
 from memory_profiler import profile
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -15,16 +8,14 @@ import numpy as np
 import importlib
 import torch
 from stable_baselines3 import DQN
-#from stable_baselines3.common.buffers import DictReplayBuffer
 
 import time
 import rl_scenario_bank
-import rl_gas_survey_discrete_env
-import rl_classes
+import rl_gas_survey_dubins_env
 import chem_utils
 
 # %%
-importlib.reload(rl_gas_survey_discrete_env)
+importlib.reload(rl_gas_survey_dubins_env)
 importlib.reload(rl_scenario_bank)
 importlib.reload(chem_utils)
 
@@ -35,8 +26,6 @@ envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
-#bank.environments = bank.environments[0:5]
-#bank.print_envs_info()
 
 # %%
 # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
@@ -49,14 +38,13 @@ if device is None:
     else:
         device = torch.device("cpu")
 
-#action_mode = {'absolute', 250, 250}
-action_mode = ['relative', 20, 20]
+turn_radius = 25
 channels = np.array([0, 1, 0, 0, 0])
-env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=False, device=device)
+env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, turn_radius=turn_radius, timer=False, debug=True, device=device)
 
-buffer_size = 800_000                      # how many transitions
+buffer_size = 200_000                      # how many transitions
 
-replay_buffer = rl_gas_survey_discrete_env.CpuDictReplayBuffer(
+replay_buffer = rl_gas_survey_dubins_env.CpuDictReplayBuffer(
     buffer_size       = buffer_size,
     observation_space = env.observation_space,
     action_space      = env.action_space,
@@ -106,7 +94,7 @@ else:
 
 #    policy_kwargs = dict(features_extractor_kwargs=dict(features_dim=256))
     policy_kwargs = dict(
-        features_extractor_class=rl_gas_survey_discrete_env.MapPlusLocExtractor,
+        features_extractor_class=rl_gas_survey_dubins_env.MapPlusLocExtractor,
         features_extractor_kwargs=dict(features_dim=512),
     )
 
@@ -131,8 +119,8 @@ else:
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
 #torch.cuda.memory._record_memory_history()
-#TIMESTEPS = 2400
-TIMESTEPS = 10000
+TIMESTEPS = 2400
+#TIMESTEPS = 10000
 
 while True:
     agent.learn(
@@ -144,4 +132,4 @@ while True:
     #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
     agent.save(f"{models_dir}/{save_prefix}{env.total_steps}")
     agent.save_replay_buffer(f"{models_dir}/buffer.pkl")
-
+# %%
