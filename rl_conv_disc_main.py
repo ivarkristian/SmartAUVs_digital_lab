@@ -118,7 +118,7 @@ else:
         batch_size=256,
         learning_rate=3e-4,
         learning_starts=256,
-        tau=0.005,
+        tau=0.05,
         train_freq=4,
         gradient_steps=1,
         policy_kwargs=policy_kwargs,
