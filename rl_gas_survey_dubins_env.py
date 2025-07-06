@@ -254,7 +254,7 @@ class GasSurveyDubinsEnv(gym.Env):
 
         t = time.process_time()
         #sample_coords = path.path([self.loc.cpu(), self.new_loc.cpu()], start_time, speed, sample_freq, synoptic)
-        start = (self.loc[0], self.loc[1], self._onehot_to_rad(self.heading))
+        start = (self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self._onehot_to_rad(self.heading))
         end = (new_xy[0], new_xy[1], self._onehot_to_rad(new_heading))
         sample_coords_xy = self.path_planner.dubins_path(start, end)
         
