@@ -81,10 +81,10 @@ current_dir = f"/{int(time.time())}_{host}"
 models_dir = models_parent + current_dir
 logs_dir = logs_parent + current_dir
 
-load = False
+load = True
 if load:
-    load_time = '1749667471_dunder' # timestamp_host
-    load_model = '0_1323' # zip-file without extension
+    load_time = '1751446340_cupid' # timestamp_host
+    load_model = '0_3389951' # zip-file without extension
     save_prefix = '1_'
     models_dir = f"{models_parent}/{load_time}"
 
