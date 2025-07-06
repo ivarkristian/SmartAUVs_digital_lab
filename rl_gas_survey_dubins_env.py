@@ -175,9 +175,14 @@ class GasSurveyDubinsEnv(gym.Env):
         if (hasattr(self, 'sampled_vals') is False) or (self.max_samples != self.max_samples_old):
             self.sampled_vals = torch.empty(self.max_samples, device=self.device)
         
-        # Init location and heading. Should be random
-        loc_x = (self.env_x_max-1) * random.random()
-        loc_y = (self.env_y_max-1) * random.random()
+        # Init location and heading. Should be random, but for Dubins paths
+        # we ensure that location is not too close to area boundaries
+        rng_x = self.env_x_max - self.turn_radius*2
+        rng_y = self.env_y_max - self.turn_radius*2
+        loc_x = rng_x * random.random() + self.turn_radius
+        loc_y = rng_y * random.random() + self.turn_radius
+        #loc_x = (self.env_x_max-1) * random.random()
+        #loc_y = (self.env_y_max-1) * random.random()
         self.heading = np.zeros(4)
         self.heading[random.choice([0, 1, 2, 3])] += 1
 
@@ -225,12 +230,13 @@ class GasSurveyDubinsEnv(gym.Env):
         if self.debug:
             print(f'step: {self.n_steps} action: {delta_xy} ({noise}) new_xy: {new_xy} new_hdg: {new_heading}', end=' ')
         out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
-        if out_of_bounds:
+        facing_the_boundary = self._facing_the_boundary(new_xy, new_heading)
+        if out_of_bounds or facing_the_boundary:
             obs, truncated, info = self._get_obs_truncated_info()
             reward += -5.0
             self.acc_reward += reward
             if self.debug:
-                print(f'out_of_bounds = True')
+                print(f'out_of_bounds or facing_the_boundary = True')
             return obs, float(reward), self.terminated, truncated, info
         else:
             self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
@@ -251,9 +257,6 @@ class GasSurveyDubinsEnv(gym.Env):
         start = (self.loc[0], self.loc[1], self._onehot_to_rad(self.heading))
         end = (new_xy[0], new_xy[1], self._onehot_to_rad(new_heading))
         sample_coords_xy = self.path_planner.dubins_path(start, end)
-        if self.debug:
-            print(f'sample_coords: {sample_coords_xy}')
-            agents.plot_n(x=sample_coords_xy[:, 0], y=sample_coords_xy[:, 1], data_list=[np.ones_like(sample_coords_xy[:, 0])], path=sample_coords_xy)
         
         if self.timer:
             print(f't1 step: {time.process_time()-t}')
@@ -267,7 +270,9 @@ class GasSurveyDubinsEnv(gym.Env):
             measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.env_x_np, self.env_y_np, self.env_vals_np, coord, radius)
 
         if self.debug:
-            print(f'measurements: {measurements}')
+            if np.isnan(measurements).sum():
+                print(f'Measurements contains nans')
+                agents.plot_n(x=sample_coords_xy[:, 0], y=sample_coords_xy[:, 1], data_list=[np.ones_like(sample_coords_xy[:, 0])], path=sample_coords_xy)
 
         if self.timer:
             print(f't2 step: {time.process_time()-t}')
@@ -409,6 +414,19 @@ class GasSurveyDubinsEnv(gym.Env):
         
         return np.array([x_noise, y_noise])
 
+    def _facing_the_boundary(self, new_loc, new_heading):
+        # headings = ('north', 'south', 'west', 'east')
+        if new_loc[0] < self.turn_radius and new_heading[2]:
+            return True
+        elif new_loc[0] > self.env_x_max - self.turn_radius and new_heading[3]:
+            return True
+        elif new_loc[1] < self.turn_radius and new_heading[1]:
+            return True
+        elif new_loc[1] > self.env_y_max - self.turn_radius and new_heading[0]:
+            return True
+
+        return False
+ 
     def loc_to_ind(self, loc: Tuple[float, float]) -> Tuple[int, int]:
         x_idx = min(int(round(loc[0] / (self.env_x_max / self.obs_x))), self.obs_x - 1)
         y_idx = min(int(round(loc[1] / (self.env_y_max / self.obs_y))), self.obs_y - 1)
