@@ -89,6 +89,9 @@ class GasSurveyDubinsEnv(gym.Env):
 
     #@profile
     def reset(self, seed=None, options=None):
+
+        if self.debug and self.n_episodes > 0:
+            self.plot_env(x=self._coord_x, y=self._coord_y, c=self.pred_var_norm, path=self.sampled_coords[:self.sample_idx])
         
         if self.n_episodes % self.print_info_rate == 0 and self.n_episodes:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.print_info_rate):.3}')
@@ -720,14 +723,15 @@ class MapPlusLocExtractor(BaseFeaturesExtractor):
     def __init__(self, obs_space: spaces.Dict, features_dim=512):
         super().__init__(obs_space, features_dim)
         self.cnn = NatureCNN(obs_space["map"], features_dim=256)
-        self.linear = torch.nn.Linear(256 + 2, features_dim)
+        self.linear = torch.nn.Linear(256 + 6, features_dim)
 
     def forward(self, obs):
         device = self.linear.weight.device          # extractor is on same device as policy
         map_t = obs["map"].to(device).float().div(255.0)  # scale 0-1
         loc_t = obs["loc"].to(device)
+        hdg_t = obs["hdg"].to(device)
         map_feats = self.cnn(map_t)
-        return torch.relu(self.linear(torch.cat([map_feats, loc_t], dim=1)))
+        return torch.relu(self.linear(torch.cat([map_feats, loc_t, hdg_t], dim=1)))
 
 class CpuDictReplayBuffer(DictReplayBuffer):
     def __init__(self, *args, sample_device=None, **kwargs):
