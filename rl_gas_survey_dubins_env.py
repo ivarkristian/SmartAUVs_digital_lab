@@ -386,19 +386,19 @@ class GasSurveyDubinsEnv(gym.Env):
         # canonical mapping -------------------------------------------------------
         r = float(turn_radius)
         mapping = {
-            ('north', 'straight'): (( 0,  r), [1, 0, 0, 0]),
+            ('north', 'straight'): (( 0,  r*math.pi/2.0), [1, 0, 0, 0]),
             ('north', 'left')    : ((-r,  r), [0, 0, 1, 0]),
             ('north', 'right')   : (( r,  r), [0, 0, 0, 1]),
 
-            ('south', 'straight'): (( 0, -r), [0, 1, 0, 0]),
+            ('south', 'straight'): (( 0, -r*math.pi/2.0), [0, 1, 0, 0]),
             ('south', 'left')    : (( r, -r), [0, 0, 0, 1]),
             ('south', 'right')   : ((-r, -r), [0, 0, 1, 0]),
 
-            ('west',  'straight'): ((-r,  0), [0, 0, 1, 0]),
+            ('west',  'straight'): ((-r*math.pi/2.0,  0), [0, 0, 1, 0]),
             ('west',  'left')    : ((-r, -r), [0, 1, 0, 0]),
             ('west',  'right')   : ((-r,  r), [1, 0, 0, 0]),
 
-            ('east',  'straight'): (( r,  0), [0, 0, 0, 1]),
+            ('east',  'straight'): (( r*math.pi/2.0,  0), [0, 0, 0, 1]),
             ('east',  'left')    : (( r,  r), [1, 0, 0, 0]),
             ('east',  'right')   : (( r, -r), [0, 1, 0, 0]),
         }
