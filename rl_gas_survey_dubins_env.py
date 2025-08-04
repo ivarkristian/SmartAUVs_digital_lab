@@ -24,7 +24,7 @@ import agents
 
 # %%
 class GasSurveyDubinsEnv(gym.Env):
-    def __init__(self, scenario_bank=None, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], turn_radius=250, channels=np.array([0, 1, 0, 0, 0]), timer=False, debug=False, device=torch.device("cpu")):
+    def __init__(self, scenario_bank=None, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], turn_radius=250, channels=np.array([0, 1, 0, 0, 0]), timer=False, debug=False, device=torch.device("cpu")):
         super(GasSurveyDubinsEnv, self).__init__()
         self.debug = debug
         self.timer = timer
@@ -32,7 +32,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.turn_radius = turn_radius
         self.path_planner = dubins.Dubins(self.turn_radius-2, 1.0) #1.0 - sample every meter
 
-        self.a_var, self.a_dist = r_weights
+        self.a_gas, self.a_var, self.a_dist = r_weights
         
         self.device = device
         # Load scenario bank
@@ -89,9 +89,6 @@ class GasSurveyDubinsEnv(gym.Env):
 
     #@profile
     def reset(self, seed=None, options=None):
-
-        if self.debug and self.n_episodes > 0:
-            self.plot_env(x=self._coord_x, y=self._coord_y, c=self.pred_var_norm, path=self.sampled_coords[:self.sample_idx])
         
         if self.n_episodes % self.print_info_rate == 0 and self.n_episodes:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.print_info_rate):.3}')
@@ -281,7 +278,7 @@ class GasSurveyDubinsEnv(gym.Env):
             print(f't2 step: {time.process_time()-t}')
         
         if self.debug:
-            print(f'#Smp: {len(sample_coords_xy)}', end=' ')
+            print(f'#Smp: {len(measurements)}', end=' ')
 
         end_idx = self.sample_idx + len(sample_coords_xy)
         if end_idx > self.max_samples:
@@ -300,9 +297,32 @@ class GasSurveyDubinsEnv(gym.Env):
         # Update location
         self.loc = self.new_loc.detach()
         self.heading = new_heading
-        #self.location[old_ind_y, old_ind_x] = 0
+
         self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
         
+        obs, truncated, info = self._get_obs_truncated_info()
+        
+        if self.channels[0] == 0 and self.channels[1] == 1:
+            reward = self._reward_ch_01000(old_var)
+        elif self.channels[0] == 1 and self.channels[1] == 1:
+            reward = self._reward_ch_11000(old_var, measurements)
+
+        self.acc_reward += reward
+        
+        if self.timer:
+            print(f'step took: {time.process_time()-tt}')
+        
+            #self._assert_gpu_consistency()
+
+        return obs, float(reward), self.terminated, truncated, info
+    
+    def render():
+        pass
+
+    def close():
+        pass
+    
+    def _reward_ch_01000(self, old_var):
         # compute reward (based on decrease in overall variance)
         if self.debug:
             print(f'old_var.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
@@ -318,25 +338,42 @@ class GasSurveyDubinsEnv(gym.Env):
             r_term = 5.0
             self.terminated = True
         
-        reward += self.a_var*r_var + self.a_dist*r_dist + r_term
-
-        obs, truncated, info = self._get_obs_truncated_info()
-        self.acc_reward += reward
+        reward = self.a_var*r_var + self.a_dist*r_dist + r_term
         
-        if self.timer:
-            print(f'step took: {time.process_time()-tt}')
         if self.debug:
             print(f'r_var: {r_var:.4}, r_dist: {r_dist:.4}, r_tot: {reward:.4}')
-            #self._assert_gpu_consistency()
 
-        return obs, float(reward), self.terminated, truncated, info
+        return reward
     
-    def render():
-        pass
+    def _reward_ch_11000(self, old_var, measurements):
+        # compute reward (based on decrease in overall variance)
+        # old_var is actually self.pred_var_norm from previous step
+        if self.debug:
+            print(f'old_var_norm.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
 
-    def close():
-        pass
-    
+        var_red = min(2.0, (old_var.mean() - self.pred_var_norm.mean()))#2.0 is max possible reward for step length 20
+        r_var = var_red # reward for reducing variance
+        # r_gas is based on the newly acquired samples.
+        # measurements have to be normalized in the same manner as the GP estimate:
+        # self.pred_mu_norm = (self.pred_mu - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
+        measurements_norm = (measurements - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
+        
+        r_gas = (measurements_norm >= 20).sum()/len(measurements_norm) # Everything above 255/20 contributes to reward
+        r_dist = -1.0 # step penalty (for changing course)
+        r_term = 0.0
+
+        #if self.pred_var_norm.mean() <= 100:
+            #r_term = self.n_steps_max - self.n_steps
+        #    r_term = 5.0
+        #    self.terminated = True
+        
+        reward = self.a_gas*r_gas + self.a_var*r_var + self.a_dist*r_dist + r_term
+        
+        if self.debug:
+            print(f'r_gas: {r_gas:.4}, r_var: {r_var:.4}, r_dist: {r_dist:.4}, r_tot: {reward:.4}')
+
+        return reward
+
     def _onehot_to_rad(self, heading_1hot):
         '''
         Parameters

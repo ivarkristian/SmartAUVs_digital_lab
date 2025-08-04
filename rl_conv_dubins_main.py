@@ -39,10 +39,10 @@ if device is None:
         device = torch.device("cpu")
 
 turn_radius = 25
-channels = np.array([0, 1, 0, 0, 0])
-env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, turn_radius=turn_radius, timer=False, debug=False, device=device)
+channels = np.array([1, 1, 0, 0, 0])
+env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], channels=channels, turn_radius=turn_radius, timer=False, debug=False, device=device)
 
-buffer_size = 800_000                      # how many transitions
+buffer_size = 400_000                      # how many transitions
 
 replay_buffer = rl_gas_survey_dubins_env.CpuDictReplayBuffer(
     buffer_size       = buffer_size,

@@ -8,11 +8,13 @@ import matplotlib.pyplot as plt
 import rl_scenario_bank
 import rl_gas_survey_env
 import rl_gas_survey_discrete_env
+import rl_gas_survey_dubins_env
 
 # %%
 importlib.reload(rl_gas_survey_env)
 importlib.reload(rl_gas_survey_discrete_env)
 importlib.reload(rl_scenario_bank)
+importlib.reload(rl_gas_survey_dubins_env)
 
 # %%
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
@@ -26,13 +28,16 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 env_device = torch.device("cpu")
 action_mode = ['relative', 20, 20]
 channels = np.array([0, 1, 0, 0, 0])
-env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=True, device=env_device)
+#env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=True, device=env_device)
+turn_radius = 25
+env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], channels=channels, turn_radius = turn_radius, timer=False, debug=True, device=env_device)
 
 # %%
 #load_time = '1749488972'
 #load_model = '0_1929600'
 #load_model = '0_3285600'
-load_model = '0_2191200'
+#load_model = 'cupid_1_6119929'
+load_model = 'dunder_0_13369941'
 models_dir = f"models"
 
 #agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
@@ -46,7 +51,8 @@ rewards = np.array([])
 q_values = []
 while not done:
     if env.debug:
-        q_vec = rl_gas_survey_discrete_env.get_q_values(agent, obs)
+        #q_vec = rl_gas_survey_discrete_env.get_q_values(agent, obs)
+        q_vec = rl_gas_survey_dubins_env.get_q_values(agent, obs)
         q_values.append(q_vec)
 
     action, _step = agent.predict(obs, deterministic=True)
@@ -59,7 +65,8 @@ q_values = np.vstack(q_values)
 # %%
 env.plot_env(x=env._coord_x, y=env._coord_y, c=env.pred_var_norm, path=env.sampled_coords[:env.sample_idx])
 
-q_act = ['up', 'down', 'left', 'right']
+#q_act = ['up', 'down', 'left', 'right']
+q_act = ['left', 'straight', 'right']
 fig, ax = plt.subplots(figsize=(4.5, 2.2), dpi=300)   # fits two-column journals
 steps = np.arange(len(rewards))
 ax.plot(steps, rewards, label="reward", linewidth=0.6)

@@ -23,7 +23,7 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 # %%
 action_mode = ['absolute', 250, 250]
 channels = np.array([1, 1, 0, 1, 1])
-env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=False)
+env = rl_gas_survey_env.GasSurveyEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=False)
 
 # %%
 # Reset all environments

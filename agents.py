@@ -204,6 +204,7 @@ class adaptive_agents():
 
         self.loc_action_space = obs['loc'] # [-1, 1]
         self.loc = (self.loc_action_space + 1)/2 * [self.x_max, self.y_max]
+        self.hdg = obs['hdg'] # onehot e.g. [0, 1, 0, 0]
 
         # tuning params
         self.kappa = kappa or 1.0
