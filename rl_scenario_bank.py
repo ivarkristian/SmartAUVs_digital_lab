@@ -179,7 +179,7 @@ class ScenarioBank:
         env = self.environments[env_num]
         if env['parameter']:
             fig, ax = plt.subplots(figsize=(8, 6))
-            scatter = ax.scatter(env['coords'][:, 0], env['coords'][:, 1], c=env['values'], cmap='coolwarm', s=2, vmin=env['values'].min(), vmax=env['values'].max())
+            scatter = ax.scatter(ç)
             if path:
                 ax.scatter(path[:, 0], path[:, 1], c='black', s=2)
             

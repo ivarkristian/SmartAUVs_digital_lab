@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import time
 from typing import Tuple
 from stable_baselines3.common.buffers import DictReplayBuffer, DictReplayBufferSamples
+from scipy.ndimage import shift      # comes with SciPy
 
 import dubins
 
@@ -24,7 +25,7 @@ import agents
 
 # %%
 class GasSurveyDubinsEnv(gym.Env):
-    def __init__(self, scenario_bank=None, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], turn_radius=250, channels=np.array([0, 1, 0, 0, 0]), timer=False, debug=False, device=torch.device("cpu")):
+    def __init__(self, scenario_bank=None, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], turn_radius=250, channels=np.array([0, 1, 0, 0, 0]), reward_func='None', timer=False, debug=False, device=torch.device("cpu")):
         super(GasSurveyDubinsEnv, self).__init__()
         self.debug = debug
         self.timer = timer
@@ -32,6 +33,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.turn_radius = turn_radius
         self.path_planner = dubins.Dubins(self.turn_radius-2, 1.0) #1.0 - sample every meter
 
+        self.reward_func = reward_func
         self.a_gas, self.a_var, self.a_dist = r_weights
         
         self.device = device
@@ -101,11 +103,38 @@ class GasSurveyDubinsEnv(gym.Env):
         self.terminated = False
 
         # Draw a random scenario/snapshot
-        rotation = random.choice([-90, 0, 90, 180])
+        self.rotation = random.choice([-90, 0, 90, 180])
         random_scenario = self.scenario_bank.sample()
 
-        self.env_xy = self._rotate_xy(random_scenario['coords'].to(self.device), rotation)
-        self.values = random_scenario['values'].to(self.device)
+        env_xy = self._rotate_xy(random_scenario['coords'].to(self.device), self.rotation)
+        values = random_scenario['values'].to(self.device)
+
+        # Offset so that source is not always in the middle
+        max_x_off = int(env_xy[:, 0].max()/2 * 0.7)
+        max_y_off = int(env_xy[:, 1].max()/2 * 0.7)
+        self.x_off = random.randint(-max_x_off, max_x_off)
+        self.y_off = random.randint(-max_y_off, max_y_off)
+        
+        x_max = env_xy[:, 0].max()
+        y_max = env_xy[:, 1].max()
+        x_min = env_xy[:, 0].min()
+        y_min = env_xy[:, 1].min()
+        
+        env_xy[:, 0] += self.x_off
+        env_xy[:, 1] += self.y_off
+        
+        values[env_xy[:, 0] > x_max] = values.min()
+        values[env_xy[:, 0] < x_min] = values.min()
+        values[env_xy[:, 1] > y_max] = values.min()
+        values[env_xy[:, 1] < y_min] = values.min()
+        env_xy[:, 0][env_xy[:, 0] > x_max] -= x_max
+        env_xy[:, 0][env_xy[:, 0] < x_min] += x_max
+        env_xy[:, 1][env_xy[:, 1] > y_max] -= y_max
+        env_xy[:, 1][env_xy[:, 1] < y_min] += y_max
+
+        self.env_xy = env_xy
+        self.values = values
+
         self.env_x_np = self.env_xy[:, 0].cpu().numpy()
         self.env_y_np = self.env_xy[:, 1].cpu().numpy()
         self.env_vals_np = self.values.cpu().numpy()
@@ -113,7 +142,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.parameter = random_scenario['parameter']
         self.depth = random_scenario['depth']
         self.time = random_scenario['time']
-        self.cur_dir = random_scenario['cur_dir'] + rotation
+        self.cur_dir = random_scenario['cur_dir'] + self.rotation
         self.cur_str = random_scenario['cur_str']
 
         if self.debug:
@@ -124,9 +153,15 @@ class GasSurveyDubinsEnv(gym.Env):
 
         self.maxdist=2*math.pi*self.turn_radius/4.0
 
-        # Init observation channels
+        # Init observation channels and 'truth'
         self._create_obs_coords()
-        #self._get_cached_grid(self.env_x_max, self.env_y_max)
+
+        obs_truth = np.zeros(len(self._coords_flat), dtype=np.float32)
+        radius = 2.0
+        for c, coord in enumerate(self._coords_flat.cpu().numpy()):
+            obs_truth[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.env_x_np, self.env_y_np, self.env_vals_np, coord, radius)
+        
+        self.obs_truth = obs_truth.reshape(self.obs_y, self.obs_x)
 
         self.pred_mu_norm = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
         self.pred_mu_norm_clipped = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
@@ -161,7 +196,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.mdl.eval()
         self.llh.eval()
        
-        self.values_submuall = self.values-self.mu_all
+        #self.values_submuall = self.values-self.mu_all
         
         # Init sample memory. Could include lawnmower path samples.
         self.max_samples_old = self.max_samples
@@ -220,6 +255,7 @@ class GasSurveyDubinsEnv(gym.Env):
         synoptic = True
         #old_ind_y, old_ind_x = np.argwhere(self.location)[0]
         old_var = self.pred_var_norm # remember to compare with correct new var  (norm, clipped etc.)
+        old_pred_mu = self.pred_mu
 
         # expects action to be up, down, left, right
 
@@ -305,7 +341,10 @@ class GasSurveyDubinsEnv(gym.Env):
         if self.channels[0] == 0 and self.channels[1] == 1:
             reward = self._reward_ch_01000(old_var)
         elif self.channels[0] == 1 and self.channels[1] == 1:
-            reward = self._reward_ch_11000(old_var, measurements)
+            if self.reward_func == 'e2e':
+                reward = self._reward_e2e(old_pred_mu)
+            else:
+                reward = self._reward_ch_11000(old_var, measurements)
 
         self.acc_reward += reward
         
@@ -321,6 +360,26 @@ class GasSurveyDubinsEnv(gym.Env):
 
     def close():
         pass
+    
+    def _reward_e2e(self, pred_mu_old):
+        old_rms = np.sqrt((pred_mu_old - self.obs_truth).mean()**2)
+        rms = np.sqrt((self.pred_mu - self.obs_truth).mean()**2)
+        
+        if self.n_steps == 1:
+            old_rms = rms
+
+        if self.debug:
+            print(f'old_rms.mean: {old_rms:.4} rms: {rms:.4}')
+
+        r_rms = old_rms - rms
+        r_dist = -1.0
+
+        reward = self.a_var*r_rms + self.a_dist*r_dist
+
+        if self.debug:
+            print(f'r_rms: {r_rms:.4}, r_dist: {r_dist:.4}, r_tot: {reward:.4}')
+
+        return reward
     
     def _reward_ch_01000(self, old_var):
         # compute reward (based on decrease in overall variance)
@@ -355,7 +414,6 @@ class GasSurveyDubinsEnv(gym.Env):
         r_var = var_red # reward for reducing variance
         # r_gas is based on the newly acquired samples.
         # measurements have to be normalized in the same manner as the GP estimate:
-        # self.pred_mu_norm = (self.pred_mu - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
         measurements_norm = (measurements - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
         
         r_gas = (measurements_norm >= 20).sum()/len(measurements_norm) # Everything above 255/20 contributes to reward
@@ -637,17 +695,6 @@ class GasSurveyDubinsEnv(gym.Env):
     def _ensure_normalization(self):
         self.pred_mu_norm_clipped = np.clip(self.pred_mu_norm, 0, 255).astype(np.uint8)
         self.pred_var_norm_clipped = np.clip(self.pred_var_norm, 0, 255).astype(np.uint8)
-    
-    def _get_cached_grid(self, x_max: float, y_max: float) -> torch.Tensor:
-        """Return (H*W,2) tensor on self.device; cache between envs."""
-        key = (x_max, y_max, self.obs_x, self.obs_y, self.device.type)
-        if key not in GasSurveyDiscEnv._grid_cache:
-            xs = torch.linspace(0, x_max, self.obs_x, device=self.device)
-            ys = torch.linspace(0, y_max, self.obs_y, device=self.device)
-            gx, gy = torch.meshgrid(ys, xs, indexing="ij")  # (H,W)
-            grid = torch.stack((gx, gy), dim=-1).view(-1, 2)  # (H*W,2)
-            GasSurveyDiscEnv._grid_cache[key] = grid
-        return GasSurveyDiscEnv._grid_cache[key]
 
     #@profile
     def _create_obs_coords(self):
@@ -739,6 +786,57 @@ class GasSurveyDubinsEnv(gym.Env):
         ax.set_title(f"Time {self.time}, {self.parameter} at -{self.depth}m. ({self.cur_str:.2}m/s @ {round(self.cur_dir)} deg)")
 
         return fig, ax
+    
+    def translate_field(self, x, y, v, dx: int = 0, dy: int = 0):
+        """
+        Shift a 2-D scalar field and replicate edge pixels to keep it in [0, 250].
+
+        Parameters
+        ----------
+        x, y : 1-D arrays (length N)
+            Grid coordinates (assumed to form a full tensor grid).
+        v    : 1-D array  (length N)
+            Values at each (x, y) point.
+        dx   : int
+            Horizontal translation in **grid steps**.
+            +dx → shift right, -dx → shift left.
+        dy   : int
+            Vertical   translation in **grid steps**.
+            +dy → shift up,   -dy → shift down.
+
+        Returns
+        -------
+        v_shift : 1-D array (length N)
+            Translated values aligned with the *original* x, y.
+        """
+
+        # 1. Infer grid shape -----------------------------------------------------
+        xs = np.unique(x)
+        ys = np.unique(y)
+
+        w, h = len(xs), len(ys)          # width (x-axis), height (y-axis)
+
+        # Safety check: x and y really form a full grid
+        if w * h != len(v):
+            raise ValueError("x and y must form a complete tensor mesh")
+
+        # 2. Put `v` into a 2-D image (row  = y, column = x) ----------------------
+        # Sort indices so that increasing row index means increasing y
+        order = np.lexsort((x, y))       # sort by y first, then x
+        img   = v[order].reshape(h, w)
+
+        # 3. Shift with edge replication -----------------------------------------
+        # SciPy’s `shift` does exactly what we need with mode='nearest'
+        img_shift = shift(img,
+                        shift=( -dy,   # rows   (note: +dy = up  ⇒ negative row shift)
+                                dx),   # columns
+                        mode='nearest',
+                        order=0)       # order=0 = nearest-neighbour, keeps uint8 exact
+
+        # 4. Flatten back to 1-D in the *same order* as the input ---------------
+        v_shift = img_shift.ravel()[np.argsort(order)]
+
+        return v_shift
 
 def get_q_values(model, obs):
     """
