@@ -41,7 +41,7 @@ if device is None:
 turn_radius = 25
 channels = np.array([1, 1, 0, 0, 0])
 reward_func = 'e2e'
-env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], channels=channels, turn_radius=turn_radius, reward_func=reward_func, timer=False, debug=True, device=device)
+env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 10.0, 1.0], channels=channels, turn_radius=turn_radius, reward_func=reward_func, timer=False, debug=False, device=device)
 
 buffer_size = 400_000                      # how many transitions
 
@@ -120,8 +120,8 @@ else:
 # %%
 #agent = PPO('MlpPolicy', env, verbose=1, n_steps=4, batch_size=2, n_epochs=2)
 #torch.cuda.memory._record_memory_history()
-TIMESTEPS = 2400
-#TIMESTEPS = 10000
+#TIMESTEPS = 2400
+TIMESTEPS = 10000
 
 while True:
     agent.learn(
