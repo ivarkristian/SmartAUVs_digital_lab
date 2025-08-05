@@ -361,11 +361,11 @@ class GasSurveyDubinsEnv(gym.Env):
     def close():
         pass
     
-    def _reward_e2e(self, pred_mu_old):
-        old_rms = np.sqrt((pred_mu_old - self.obs_truth).mean()**2)
+    def _reward_e2e(self, old_pred_mu):
+        old_rms = np.sqrt((old_pred_mu - self.obs_truth).mean()**2)
         rms = np.sqrt((self.pred_mu - self.obs_truth).mean()**2)
         
-        if self.n_steps == 1:
+        if old_pred_mu.mean() == 0:
             old_rms = rms
 
         if self.debug:
