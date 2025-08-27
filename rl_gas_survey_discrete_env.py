@@ -158,7 +158,7 @@ class GasSurveyDiscEnv(gym.Env):
         
         # Init sample memory. Could include lawnmower path samples.
         self.max_samples_old = self.max_samples
-        self.max_samples = int(self.maxdist*(self.n_steps_max + 1))
+        self.max_samples = int(self.maxdist*(self.n_steps_max + 1))*2
         self.sample_idx = 0
         self.sample_idx_mdl = 0
 

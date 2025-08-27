@@ -27,17 +27,17 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 # %%
 env_device = torch.device("cpu")
 action_mode = ['relative', 20, 20]
-channels = np.array([0, 1, 0, 0, 0])
+channels = np.array([1, 1, 0, 0, 0])
 #env = rl_gas_survey_discrete_env.GasSurveyDiscEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0], channels=channels, action_mode=action_mode, timer=False, debug=True, device=env_device)
 turn_radius = 25
 env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], channels=channels, turn_radius = turn_radius, timer=False, debug=True, device=env_device)
 
 # %%
 #load_time = '1749488972'
-#load_model = '0_1929600'
-#load_model = '0_3285600'
-#load_model = 'cupid_1_6119929'
-load_model = 'dunder_0_13369941'
+#load_model = '1751822750_rudolph_0_15769965' # DQN, 01000, disc(20, 20)
+#load_model = '1752402590_dunder_0_16219927' # DQN, 01000, dubins(25)
+load_model = '1754301775_cupid_0_950000' # DQN, 11000, dubins(25)
+
 models_dir = f"models"
 
 #agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)

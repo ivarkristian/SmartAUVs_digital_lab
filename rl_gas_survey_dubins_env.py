@@ -641,6 +641,8 @@ class GasSurveyDubinsEnv(gym.Env):
         t = time.process_time()
         self.pred_mu_norm = (self.pred_mu - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
         self.pred_var_norm = self.pred_var/self.sigma2_all * 255
+        self._normalize_pred_layers()
+
         if self.timer:
             print(f't3.4 step: {time.process_time()-t}')
 
@@ -667,8 +669,6 @@ class GasSurveyDubinsEnv(gym.Env):
         Only the layers whose corresponding entry in `self.channels`
         is truthy (1 / True) are stacked.
         """
-        
-        self._ensure_normalization()
 
         # List all *possible* layers in a canonical order
         candidate_layers = [
@@ -692,7 +692,7 @@ class GasSurveyDubinsEnv(gym.Env):
         stacked = np.stack(chosen_layers, axis=0).astype(np.uint8)
         return stacked
     
-    def _ensure_normalization(self):
+    def _normalize_pred_layers(self):
         self.pred_mu_norm_clipped = np.clip(self.pred_mu_norm, 0, 255).astype(np.uint8)
         self.pred_var_norm_clipped = np.clip(self.pred_var_norm, 0, 255).astype(np.uint8)
 
@@ -760,7 +760,7 @@ class GasSurveyDubinsEnv(gym.Env):
 
         return
 
-    def plot_env(self, x=None, y=None, c=None, path=None, x_range=[0, 250], y_range=[0, 250]):
+    def plot_env(self, x=None, y=None, c=None, path=None, x_range=[0, 250], y_range=[0, 250], value_title=''):
 
         if x is None:
             x = self.env_xy[:, 0]
@@ -778,7 +778,7 @@ class GasSurveyDubinsEnv(gym.Env):
         ax.set_ylim(y_range[0], y_range[1])
         
         cbar = fig.colorbar(scatter, ax=ax)
-        cbar.set_label('Value')
+        cbar.set_label(f'Value ({value_title})')
 
         # Add labels and title
         ax.set_xlabel('Easting [m]')
