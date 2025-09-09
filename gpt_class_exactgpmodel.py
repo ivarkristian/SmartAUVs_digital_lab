@@ -3,7 +3,7 @@ import torch
 import gpytorch
 
 class ExactGPModel(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, type, lengthscale_constraint=gpytorch.constraints.Positive(), constant_constraint=gpytorch.constraints.Positive()):
+    def __init__(self, train_x, train_y, likelihood, type, lengthscale_constraint=gpytorch.constraints.Positive()):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         
         self.max_losses = 10000
@@ -21,7 +21,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
         self.add_noises = torch.tensor([0.0]*train_x.size(0))
         
         if type == 'scale_rbf':
-            self.mean_module = gpytorch.means.ConstantMean(constant_constraint=constant_constraint)
+            self.mean_module = gpytorch.means.ConstantMean()
             self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_constraint=lengthscale_constraint))
         elif type == 'rbf':
             self.mean_module = gpytorch.means.ConstantMean()

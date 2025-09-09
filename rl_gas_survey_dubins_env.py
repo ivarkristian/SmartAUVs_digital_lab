@@ -10,7 +10,7 @@ from gymnasium import spaces
 import random
 import matplotlib.pyplot as plt
 import time
-from typing import Tuple
+from typing import Tuple, Union, Sequence
 from stable_baselines3.common.buffers import DictReplayBuffer, DictReplayBufferSamples
 from scipy.ndimage import shift      # comes with SciPy
 
@@ -257,9 +257,13 @@ class GasSurveyDubinsEnv(gym.Env):
         old_var = self.pred_var_norm # remember to compare with correct new var  (norm, clipped etc.)
         old_pred_mu = self.pred_mu
 
-        # expects action to be up, down, left, right
-
-        delta_xy, new_heading = self._dubins_delta(action, self.heading, self.turn_radius)
+        # expects action to be left, forward, right
+        n_headings = len(self.heading)
+        delta_xy, new_heading = move_with_heading(
+            heading_1hot=self.heading, action=action, turn_radius=self.turn_radius,
+            turn_degrees=int(360/n_headings), n_headings=n_headings, straight_matches_arc=True
+        )
+        #delta_xy, new_heading = self._dubins_delta_90(action, self.heading, self.turn_radius)
         noise = self._delta_add_noise(delta_xy, self.turn_radius)
         new_xy = self.loc[:2].cpu().numpy() + delta_xy + noise
 
@@ -442,28 +446,31 @@ class GasSurveyDubinsEnv(gym.Env):
         ----------
         one of [math.pi/2, -math.pi/2, -math.pi, math.pi]
         '''
-        rads = [math.pi/2, -math.pi/2, math.pi, 0]
         try:
             idx = list(heading_1hot).index(1)
         except ValueError:
             raise ValueError("heading_1hot must have exactly one 1") from None
 
-        return rads[idx]
+        if len(heading_1hot) == 4:
+            return idx*math.pi/2
+        elif len(heading_1hot) == 8:
+            return idx*math.pi/4
+        
+        return
 
 
-    def _dubins_delta(self, action, heading_1hot, turn_radius: float | int):
+    def _dubins_delta_90(self, action, heading_1hot, turn_radius: float | int):
         """
         Parameters
         ----------
         action : {"left", "straight", "right"}
         heading_1hot : iterable of length 4 [north, south, west, east]  e.g. [1,0,0,0] for north.
         turn_radius : positive float (or int)
-        dtype, device : passed to the returned tensor
 
         Returns
         -------
-        Δ : shape (2,) torch.Tensor
-            (dx, dy) after executing the action.
+        (Δ : shape (2,) torch.Tensor, heading)
+            ([dx, dy], heading) after executing the action.
         """
         # decode the action
         actions = ["left", "straight", "right"]
@@ -504,7 +511,64 @@ class GasSurveyDubinsEnv(gym.Env):
             raise ValueError(f"invalid action '{act}'") from None
 
         return np.array([dx, dy]), np.array(new_heading)
-    
+
+    def _dubins_delta_45(self, action, heading_hot, turn_radius: float | int):
+        """
+        Parameters
+        ----------
+        action : {"left", "straight", "right"}
+        heading : iterable of length 4 [north, south, west, east]  e.g. [1,0,1,0] for northwest.
+        turn_radius : positive float (or int)
+
+        Returns
+        -------
+        (Δ : shape (2,) torch.Tensor, heading)
+            ([dx, dy], heading) after executing the action.
+        """
+        # decode the action
+        actions = ["left", "straight", "right"]
+        act = actions[action]
+
+        # validate & decode the heading ------------------------------------------
+        headings = ('north', 'south', 'west', 'east')
+        
+        on_idx = [i for i, v in enumerate(heading_hot) if v == 1]
+        # Single direction (1-hot)
+        if len(on_idx) == 1:
+            heading = headings[on_idx[0]]
+
+        # Two directions (2-hot) → combine or reject
+        else:
+            d1, d2 = headings[on_idx[0]], headings[on_idx[1]]
+            heading = d1+d2
+
+        # canonical mapping -------------------------------------------------------
+        r = float(turn_radius)
+        mapping = {
+            ('north', 'straight'): (( 0,  r*math.pi/2.0), [1, 0, 0, 0]),
+            ('north', 'left')    : ((-r,  r), [0, 0, 1, 0]),
+            ('north', 'right')   : (( r,  r), [0, 0, 0, 1]),
+
+            ('south', 'straight'): (( 0, -r*math.pi/2.0), [0, 1, 0, 0]),
+            ('south', 'left')    : (( r, -r), [0, 0, 0, 1]),
+            ('south', 'right')   : ((-r, -r), [0, 0, 1, 0]),
+
+            ('west',  'straight'): ((-r*math.pi/2.0,  0), [0, 0, 1, 0]),
+            ('west',  'left')    : ((-r, -r), [0, 1, 0, 0]),
+            ('west',  'right')   : ((-r,  r), [1, 0, 0, 0]),
+
+            ('east',  'straight'): (( r*math.pi/2.0,  0), [0, 0, 0, 1]),
+            ('east',  'left')    : (( r,  r), [1, 0, 0, 0]),
+            ('east',  'right')   : (( r, -r), [0, 1, 0, 0]),
+        }
+
+        try:
+            (dx, dy), new_heading = mapping[(heading, act)]
+        except KeyError:
+            raise ValueError(f"invalid action '{act}'") from None
+
+        return np.array([dx, dy]), np.array(new_heading)
+
     def _delta_add_noise(self, delta_xy, step, max_percentage=0.05):
         max_noise = max_percentage * step
         x_noise = (random.random() - 0.5)*2 * max_noise
@@ -513,15 +577,47 @@ class GasSurveyDubinsEnv(gym.Env):
         return np.array([x_noise, y_noise])
 
     def _facing_the_boundary(self, new_loc, new_heading):
+        if len(new_heading) == 4:
+            headings = ('east', 'north', 'west', 'south')
+        elif len(new_heading) == 8:
+            headings = ('east', 'ne', 'north', 'nw', 'west', 'sw', 'south', 'se')
+
         # headings = ('north', 'south', 'west', 'east')
-        if new_loc[0] < self.turn_radius and new_heading[2]:
-            return True
-        elif new_loc[0] > self.env_x_max - self.turn_radius and new_heading[3]:
-            return True
-        elif new_loc[1] < self.turn_radius and new_heading[1]:
-            return True
-        elif new_loc[1] > self.env_y_max - self.turn_radius and new_heading[0]:
-            return True
+        h_idx = list(new_heading).index(1)
+        
+        match headings(h_idx):
+            case 'east':
+                return new_loc[0] > self.env_x_max - self.turn_radius
+            case 'ne':
+                cx = self.env_x_max - self.turn_radius
+                cy = self.env_y_max - self.turn_radius
+                return (new_loc[0] > self.env_x_max - self.turn_radius/2 or
+                    new_loc[1] > self.env_y_max - self.turn_radius/2 or
+                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
+            case 'north':
+                return new_loc[1] > self.env_y_max - self.turn_radius
+            case 'nw':
+                cx = self.turn_radius
+                cy = self.env_y_max - self.turn_radius
+                return (new_loc[0] < self.turn_radius/2 or
+                    new_loc[1] > self.env_y_max - self.turn_radius/2 or
+                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
+            case 'west':
+                return new_loc[0] < self.turn_radius
+            case 'sw':
+                cx = self.turn_radius
+                cy = self.turn_radius
+                return (new_loc[0] < self.turn_radius/2 or
+                    new_loc[1] < self.turn_radius/2 or
+                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
+            case 'south':
+                return new_loc[1] < self.turn_radius
+            case 'se':
+                cx = self.env_x_max - self.turn_radius
+                cy = self.turn_radius
+                return (new_loc[0] > self.env_x_max - self.turn_radius/2 or
+                    new_loc[1] < self.turn_radius/2 or
+                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
 
         return False
  
@@ -837,6 +933,124 @@ class GasSurveyDubinsEnv(gym.Env):
         v_shift = img_shift.ravel()[np.argsort(order)]
 
         return v_shift
+
+def move_with_heading(
+    heading_1hot: Sequence[int],
+    action: Union[int, str],
+    turn_radius: float,
+    turn_degrees: float = 90.0,               # e.g. 45.0 for finer turning
+    n_headings: int = 8,                      # 4 (NESW), 8 (N,NE,E,SE,...), etc.
+    straight_matches_arc: bool = True,        # straight distance = r*theta
+    forward_step: float = None,               # if provided, overrides above
+    ) -> Tuple[np.ndarray, np.ndarray, int]:
+    """
+    Compute (dx, dy) and the new heading after taking a discrete high-level action
+    ('left', 'straight', 'right') from a quantized heading with N bins.
+
+    The turn is a circular arc of radius r through angle θ = turn_degrees (in radians).
+    The straight move is either length r*θ (to match arc length) or a fixed forward_step.
+
+    Parameters
+    ----------
+    heading_1hot : one-hot of length n_headings
+        Current heading bin as a one-hot vector (exactly one '1').
+        Heading index 0 corresponds to angle ψ=0 (pointing along +x),
+        indices increase CCW in steps of 2π / n_headings.
+    action : int or str
+        Either integer in {0,1,2} or string in {"left","straight","right"}.
+    turn_radius : float
+        Turning radius r (same units as your map coordinates).
+    turn_degrees : float
+        Turn angle in degrees for left/right (e.g. 45, 90). Internally converted to radians.
+    n_headings : int
+        Number of discrete heading bins (e.g., 4 or 8).
+    straight_matches_arc : bool
+        If True, straight move distance = r * theta (arc length), so all three actions
+        traverse equal path length. Ignored if `forward_step` is provided.
+    forward_step : float or None
+        If not None, use this distance for the straight action.
+
+    Returns
+    -------
+    dxdy : np.ndarray, shape (2,)
+        World-frame displacement.
+    new_onehot : np.ndarray, shape (n_headings,)
+        One-hot vector for the new heading.
+    new_idx : int
+        New heading index (0..n_headings-1).
+    """
+    # -------- decode current heading index ψ ---------------------------
+    try:
+        h_idx = list(heading_1hot).index(1)
+    except ValueError as e:
+        raise ValueError("heading_1hot must have exactly one 1") from e
+    if not (0 <= h_idx < n_headings):
+        raise ValueError(f"heading index {h_idx} outside 0..{n_headings-1}")
+
+    psi = 2.0 * math.pi * (h_idx / n_headings)   # radians; 0 = +x, CCW positive
+
+    # -------- decode action -------------------------------------------
+    if isinstance(action, str):
+        action = action.lower()
+        if action not in ("left", "straight", "right"):
+            raise ValueError("action must be 'left', 'straight', or 'right'")
+    elif isinstance(action, int):
+        if action not in (0, 1, 2):
+            raise ValueError("int action must be 0:'left', 1:'straight', 2:'right'")
+        action = ("left", "straight", "right")[action]
+    else:
+        raise TypeError("action must be int or str")
+
+    theta = math.radians(turn_degrees)          # arc angle for turns
+    r = float(turn_radius)
+
+    # -------- local-frame displacements --------------------------------
+    # Define a local frame: +y forward (along current heading), +x to the right.
+    # For a left turn by theta on a circle of radius r:
+    #   dx_local = - r * sin(theta)
+    #   dy_local =   r * (1 - cos(theta))
+    # For a right turn: dx_local = + r * sin(theta), dy_local same.
+    if action == "left":
+        dx_local = r * math.sin(theta)
+        dy_local = r * (1 - math.cos(theta))
+        heading_delta_bins = +1                 # rotate CCW by one bin if bins match turn angle
+    elif action == "right":
+        dx_local =  r * math.sin(theta)
+        dy_local =  -r * (1 - math.cos(theta))
+        heading_delta_bins = -1                 # rotate CW by one bin
+    else:  # "straight"
+        # distance for straight move
+        if forward_step is not None:
+            dist = float(forward_step)
+        else:
+            dist = r * theta if straight_matches_arc else r
+        dx_local = dist
+        dy_local = 0.0
+        heading_delta_bins = 0
+
+    # -------- rotate local displacement into world frame ---------------
+    # Local-to-world rotation by current heading angle ψ
+    # local basis: [right, forward]; world x = cosψ*right - sinψ*forward
+    # Using matrix for vector [dx_local, dy_local] where dy_local is along forward:
+    cos_psi, sin_psi = math.cos(psi), math.sin(psi)
+    dx_world =  cos_psi * dx_local - sin_psi * dy_local
+    dy_world =  sin_psi * dx_local + cos_psi * dy_local
+
+    # -------- update heading index -------------------------------------
+    # If the heading lattice step equals the turn angle (e.g., 8 bins + 45°)
+    # then moving left/right advances by exactly one bin. More generally,
+    # we advance by round(theta / (2π / n_headings)) bins.
+    bins_per_turn = int(round(theta / (2 * math.pi / n_headings)))
+    if action == "straight":
+        delta_bins = 0
+    else:
+        delta_bins = int(math.copysign(bins_per_turn, heading_delta_bins))
+    new_idx = (h_idx + delta_bins) % n_headings
+
+    new_onehot = np.zeros(n_headings, dtype=int)
+    new_onehot[new_idx] = 1
+
+    return np.array([dx_world, dy_world], dtype=float), new_onehot, new_idx
 
 def get_q_values(model, obs):
     """
