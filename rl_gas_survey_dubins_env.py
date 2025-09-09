@@ -184,7 +184,7 @@ class GasSurveyDubinsEnv(gym.Env):
 
         self.llh = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
         empty_x = torch.empty((0, 2), device=self.device)
-        empty_y = torch.empty(0, device=self.device)
+        empty_y = torch.empty((0,), device=self.device)
         self.mdl = ExactGPModel(
             empty_x,
             empty_y,
@@ -218,15 +218,17 @@ class GasSurveyDubinsEnv(gym.Env):
         loc_y = rng_y * random.random() + self.turn_radius
         #loc_x = (self.env_x_max-1) * random.random()
         #loc_y = (self.env_y_max-1) * random.random()
-        self.heading = np.zeros(4)
-        self.heading[random.choice([0, 1, 2, 3])] += 1
+        #self.heading = np.zeros(4)
+        #self.heading[random.choice([0, 1, 2, 3])] += 1
+        self.heading = np.zeros(8)
+        self.heading[random.choice([0, 1, 2, 3, 4, 5, 6, 7])] += 1
 
         self.obs_x_len=self.env_x_max/self.obs_x
         self.obs_y_len=self.env_y_max/self.obs_y
 
         self.loc = torch.tensor([loc_x, loc_y, self.depth], device=self.device)
         if self.debug:
-            print(f'reset loc: {loc_x}, {loc_y}')
+            print(f'reset loc: {loc_x}, {loc_y} hdg: {self.heading}')
 
         self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
 
@@ -570,9 +572,10 @@ class GasSurveyDubinsEnv(gym.Env):
         return np.array([dx, dy]), np.array(new_heading)
 
     def _delta_add_noise(self, delta_xy, step, max_percentage=0.05):
-        max_noise = max_percentage * step
-        x_noise = (random.random() - 0.5)*2 * max_noise
-        y_noise = (random.random() - 0.5)*2 * max_noise
+        max_noise_x = max_percentage * abs(delta_xy[0])
+        max_noise_y = max_percentage * abs(delta_xy[1])
+        x_noise = (random.random() - 0.5)*2 * max_noise_x
+        y_noise = (random.random() - 0.5)*2 * max_noise_y
         
         return np.array([x_noise, y_noise])
 
@@ -585,7 +588,7 @@ class GasSurveyDubinsEnv(gym.Env):
         # headings = ('north', 'south', 'west', 'east')
         h_idx = list(new_heading).index(1)
         
-        match headings(h_idx):
+        match headings[h_idx]:
             case 'east':
                 return new_loc[0] > self.env_x_max - self.turn_radius
             case 'ne':
@@ -942,7 +945,7 @@ def move_with_heading(
     n_headings: int = 8,                      # 4 (NESW), 8 (N,NE,E,SE,...), etc.
     straight_matches_arc: bool = True,        # straight distance = r*theta
     forward_step: float = None,               # if provided, overrides above
-    ) -> Tuple[np.ndarray, np.ndarray, int]:
+    ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute (dx, dy) and the new heading after taking a discrete high-level action
     ('left', 'straight', 'right') from a quantized heading with N bins.
@@ -1050,7 +1053,7 @@ def move_with_heading(
     new_onehot = np.zeros(n_headings, dtype=int)
     new_onehot[new_idx] = 1
 
-    return np.array([dx_world, dy_world], dtype=float), new_onehot, new_idx
+    return np.array([dx_world, dy_world], dtype=float), new_onehot
 
 def get_q_values(model, obs):
     """
@@ -1072,7 +1075,7 @@ class MapPlusLocExtractor(BaseFeaturesExtractor):
     def __init__(self, obs_space: spaces.Dict, features_dim=512):
         super().__init__(obs_space, features_dim)
         self.cnn = NatureCNN(obs_space["map"], features_dim=256)
-        self.linear = torch.nn.Linear(256 + 6, features_dim)
+        self.linear = torch.nn.Linear(256 + 10, features_dim)
 
     def forward(self, obs):
         device = self.linear.weight.device          # extractor is on same device as policy

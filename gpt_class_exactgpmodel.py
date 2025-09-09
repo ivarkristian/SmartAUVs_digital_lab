@@ -4,7 +4,7 @@ import gpytorch
 
 class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, type, lengthscale_constraint=gpytorch.constraints.Positive()):
-        super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
+        super().__init__(train_x, train_y, likelihood)
         
         self.max_losses = 10000
         self.losses = [0]*self.max_losses
