@@ -31,7 +31,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.timer = timer
         self.print_info_rate = 10
         self.turn_radius = turn_radius
-        self.path_planner = dubins.Dubins(self.turn_radius-2, 1.0) #1.0 - sample every meter
+        self.path_planner = dubins.Dubins(self.turn_radius-3, 1.0) #1.0 - sample every meter
 
         self.reward_func = reward_func
         self.a_gas, self.a_var, self.a_dist = r_weights
@@ -81,7 +81,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.observation_space = spaces.Dict({
             "map": self.observation_layers,
             "loc": spaces.Box(-1.0, 1.0, (2,), np.float32),
-            "hdg": spaces.MultiBinary(4)
+            "hdg": spaces.MultiBinary(8)
         })
 
         #Discrete action space, left - 0, straight - 1, right - 2:
@@ -259,6 +259,8 @@ class GasSurveyDubinsEnv(gym.Env):
         old_var = self.pred_var_norm # remember to compare with correct new var  (norm, clipped etc.)
         old_pred_mu = self.pred_mu
 
+        if self.debug:
+            print(f'step: {self.n_steps} action: {action}')
         # expects action to be left, forward, right
         n_headings = len(self.heading)
         delta_xy, new_heading = move_with_heading(
@@ -270,7 +272,7 @@ class GasSurveyDubinsEnv(gym.Env):
         new_xy = self.loc[:2].cpu().numpy() + delta_xy + noise
 
         if self.debug:
-            print(f'step: {self.n_steps} action: {delta_xy} ({noise}) new_xy: {new_xy} new_hdg: {new_heading}', end=' ')
+            print(f'delta_xy: {delta_xy:.2f} ({noise:.2f}) new_xy: {new_xy:.2f} new_hdg: {new_heading}', end=' ')
         out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
         facing_the_boundary = self._facing_the_boundary(new_xy, new_heading)
         if out_of_bounds or facing_the_boundary:
@@ -390,7 +392,7 @@ class GasSurveyDubinsEnv(gym.Env):
     def _reward_ch_01000(self, old_var):
         # compute reward (based on decrease in overall variance)
         if self.debug:
-            print(f'old_var.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
+            print(f'old_var.mean: {old_var.mean():.4f} pred_var_norm.mean: {self.pred_var_norm.mean():.4f}')
 
         var_red = min(2.0, (old_var.mean() - self.pred_var_norm.mean()))#2.0 is max possible reward for step length 20
         r_var = var_red # reward for reducing variance
@@ -406,7 +408,7 @@ class GasSurveyDubinsEnv(gym.Env):
         reward = self.a_var*r_var + self.a_dist*r_dist + r_term
         
         if self.debug:
-            print(f'r_var: {r_var:.4}, r_dist: {r_dist:.4}, r_tot: {reward:.4}')
+            print(f'r_var: {r_var:.4f}, r_dist: {r_dist:.4f}, r_tot: {reward:.4f}')
 
         return reward
     
@@ -414,15 +416,19 @@ class GasSurveyDubinsEnv(gym.Env):
         # compute reward (based on decrease in overall variance)
         # old_var is actually self.pred_var_norm from previous step
         if self.debug:
-            print(f'old_var_norm.mean: {old_var.mean():.4} pred_var_norm.mean: {self.pred_var_norm.mean():.4}')
+            print(f'old_var_norm.mean: {old_var.mean():.4f} pred_var_norm.mean: {self.pred_var_norm.mean():.4f}')
 
-        var_red = min(2.0, (old_var.mean() - self.pred_var_norm.mean()))#2.0 is max possible reward for step length 20
-        r_var = var_red # reward for reducing variance
+        var_red = min(2.0, (old_var.mean() - self.pred_var_norm.mean()))
+        # 2.0 is max possible reward
+        # Max number of samples seems to be 22, so we scale with 22/len(measurements)
+        r_var = var_red * 22/len(measurements) # reward for reducing variance
+
         # r_gas is based on the newly acquired samples.
         # measurements have to be normalized in the same manner as the GP estimate:
         measurements_norm = (measurements - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
-        
-        r_gas = (measurements_norm >= 20).sum()/len(measurements_norm) # Everything above 255/20 contributes to reward
+        r_gas = (measurements_norm >= 5).sum()/len(measurements_norm)
+        # Everything above n contributes to reward, max is 1.0
+
         r_dist = -1.0 # step penalty (for changing course)
         r_term = 0.0
 
@@ -434,7 +440,7 @@ class GasSurveyDubinsEnv(gym.Env):
         reward = self.a_gas*r_gas + self.a_var*r_var + self.a_dist*r_dist + r_term
         
         if self.debug:
-            print(f'r_gas: {r_gas:.4}, r_var: {r_var:.4}, r_dist: {r_dist:.4}, r_tot: {reward:.4}')
+            print(f'r_gas: {r_gas:.4f}, r_var: {r_var:.4f}, r_dist: {r_dist:.4f}, r_tot: {reward:.4f}')
 
         return reward
 
@@ -997,11 +1003,12 @@ def move_with_heading(
         action = action.lower()
         if action not in ("left", "straight", "right"):
             raise ValueError("action must be 'left', 'straight', or 'right'")
-    elif isinstance(action, int):
+    elif isinstance(action, int) or isinstance(action, np.int64):
         if action not in (0, 1, 2):
             raise ValueError("int action must be 0:'left', 1:'straight', 2:'right'")
         action = ("left", "straight", "right")[action]
     else:
+        print(f'action.dtype: {type(action)}')
         raise TypeError("action must be int or str")
 
     theta = math.radians(turn_degrees)          # arc angle for turns
