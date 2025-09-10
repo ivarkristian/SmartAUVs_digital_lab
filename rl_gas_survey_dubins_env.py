@@ -228,7 +228,7 @@ class GasSurveyDubinsEnv(gym.Env):
 
         self.loc = torch.tensor([loc_x, loc_y, self.depth], device=self.device)
         if self.debug:
-            print(f'reset loc: {loc_x}, {loc_y} hdg: {self.heading}')
+            print(f'reset loc: {loc_x:.2f}, {loc_y:.2f} hdg: {self.heading}')
 
         self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
 
@@ -272,7 +272,7 @@ class GasSurveyDubinsEnv(gym.Env):
         new_xy = self.loc[:2].cpu().numpy() + delta_xy + noise
 
         if self.debug:
-            print(f'delta_xy: {delta_xy:.2f} ({noise:.2f}) new_xy: {new_xy:.2f} new_hdg: {new_heading}', end=' ')
+            print(f'delta_xy: {delta_xy} ({noise}) new_xy: {new_xy} new_hdg: {new_heading}', end=' ')
         out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
         facing_the_boundary = self._facing_the_boundary(new_xy, new_heading)
         if out_of_bounds or facing_the_boundary:
