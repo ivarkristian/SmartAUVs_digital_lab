@@ -24,9 +24,9 @@ import agents
 # Definitions
 
 # %%
-class GasSurveyDubinsEnv(gym.Env):
+class GasSurveyDubinsAgentEnv(gym.Env):
     def __init__(self, scenario_bank=None, gp_ls_constraint=gpytorch.constraints.Interval(9, 11), gp_kernel_type='scale_rbf', gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], turn_radius=250, channels=np.array([0, 1, 0, 0, 0]), reward_func='None', timer=False, debug=False, device=torch.device("cpu")):
-        super(GasSurveyDubinsEnv, self).__init__()
+        super(GasSurveyDubinsAgentEnv, self).__init__()
         self.debug = debug
         self.timer = timer
         self.print_info_rate = 10
@@ -247,7 +247,7 @@ class GasSurveyDubinsEnv(gym.Env):
         return obs, info
 
     #@profile
-    def step(self, action, speed=1.0, sample_freq=1.0):
+    def step(self, sample_coords_xy, new_xy, new_heading, speed=1.0, sample_freq=1.0):
         tt = time.process_time()
         t = time.process_time()
         self.n_steps += 1
@@ -260,30 +260,9 @@ class GasSurveyDubinsEnv(gym.Env):
         old_pred_mu = self.pred_mu
 
         if self.debug:
-            print(f'step: {self.n_steps} action: {action}')
-        # expects action to be left, forward, right
-        n_headings = len(self.heading)
-        delta_xy, new_heading = move_with_heading(
-            heading_1hot=self.heading, action=action, turn_radius=self.turn_radius,
-            turn_degrees=int(360/n_headings), n_headings=n_headings, straight_matches_arc=True
-        )
-        #delta_xy, new_heading = self._dubins_delta_90(action, self.heading, self.turn_radius)
-        noise = self._delta_add_noise(delta_xy, self.turn_radius)
-        new_xy = self.loc[:2].cpu().numpy() + delta_xy + noise
-
-        if self.debug:
-            print(f'delta_xy: {delta_xy} ({noise}) new_xy: {new_xy} new_hdg: {new_heading}', end=' ')
-        out_of_bounds = not ((0 <= new_xy[0] <= self.env_x_max) and (0 <= new_xy[1] <= self.env_y_max))
-        facing_the_boundary = self._facing_the_boundary(new_xy, new_heading)
-        if out_of_bounds or facing_the_boundary:
-            obs, truncated, info = self._get_obs_truncated_info()
-            reward += -5.0
-            self.acc_reward += reward
-            if self.debug:
-                print(f'out_of_bounds or facing_the_boundary = True')
-            return obs, float(reward), self.terminated, truncated, info
-        else:
-            self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
+            print(f'step: {self.n_steps}')
+        
+        self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
         
         if self.timer:
             print(f't0 step: {time.process_time()-t}')
@@ -297,10 +276,6 @@ class GasSurveyDubinsEnv(gym.Env):
             return obs, float(reward), self.terminated, truncated, info
 
         t = time.process_time()
-        #sample_coords = path.path([self.loc.cpu(), self.new_loc.cpu()], start_time, speed, sample_freq, synoptic)
-        start = (self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), onehot_to_rad(self.heading))
-        end = (new_xy[0], new_xy[1], onehot_to_rad(new_heading))
-        sample_coords_xy = self.path_planner.dubins_path(start, end)
         
         if self.timer:
             print(f't1 step: {time.process_time()-t}')
@@ -561,51 +536,6 @@ class GasSurveyDubinsEnv(gym.Env):
         y_noise = (random.random() - 0.5)*2 * max_noise_y
         
         return np.array([x_noise, y_noise])
-
-    def _facing_the_boundary(self, new_loc, new_heading):
-        if len(new_heading) == 4:
-            headings = ('east', 'north', 'west', 'south')
-        elif len(new_heading) == 8:
-            headings = ('east', 'ne', 'north', 'nw', 'west', 'sw', 'south', 'se')
-
-        # headings = ('north', 'south', 'west', 'east')
-        h_idx = list(new_heading).index(1)
-        
-        match headings[h_idx]:
-            case 'east':
-                return new_loc[0] > self.env_x_max - self.turn_radius
-            case 'ne':
-                cx = self.env_x_max - self.turn_radius
-                cy = self.env_y_max - self.turn_radius
-                return (new_loc[0] > self.env_x_max - self.turn_radius/2 or
-                    new_loc[1] > self.env_y_max - self.turn_radius/2 or
-                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
-            case 'north':
-                return new_loc[1] > self.env_y_max - self.turn_radius
-            case 'nw':
-                cx = self.turn_radius
-                cy = self.env_y_max - self.turn_radius
-                return (new_loc[0] < self.turn_radius/2 or
-                    new_loc[1] > self.env_y_max - self.turn_radius/2 or
-                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
-            case 'west':
-                return new_loc[0] < self.turn_radius
-            case 'sw':
-                cx = self.turn_radius
-                cy = self.turn_radius
-                return (new_loc[0] < self.turn_radius/2 or
-                    new_loc[1] < self.turn_radius/2 or
-                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
-            case 'south':
-                return new_loc[1] < self.turn_radius
-            case 'se':
-                cx = self.env_x_max - self.turn_radius
-                cy = self.turn_radius
-                return (new_loc[0] > self.env_x_max - self.turn_radius/2 or
-                    new_loc[1] < self.turn_radius/2 or
-                    (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
-
-        return False
  
     def loc_to_ind(self, loc: Tuple[float, float]) -> Tuple[int, int]:
         x_idx = min(int(round(loc[0] / (self.env_x_max / self.obs_x))), self.obs_x - 1)
@@ -920,6 +850,51 @@ class GasSurveyDubinsEnv(gym.Env):
 
         return v_shift
 
+def facing_the_boundary(new_loc, new_heading, env_x_max, env_y_max, turn_radius):
+    if len(new_heading) == 4:
+        headings = ('east', 'north', 'west', 'south')
+    elif len(new_heading) == 8:
+        headings = ('east', 'ne', 'north', 'nw', 'west', 'sw', 'south', 'se')
+
+    # headings = ('north', 'south', 'west', 'east')
+    h_idx = list(new_heading).index(1)
+    
+    match headings[h_idx]:
+        case 'east':
+            return new_loc[0] > env_x_max - turn_radius
+        case 'ne':
+            cx = env_x_max - turn_radius
+            cy = env_y_max - turn_radius
+            return (new_loc[0] > env_x_max - turn_radius/2 or
+                new_loc[1] > env_y_max - turn_radius/2 or
+                (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < turn_radius**2)
+        case 'north':
+            return new_loc[1] > env_y_max - turn_radius
+        case 'nw':
+            cx = turn_radius
+            cy = env_y_max - turn_radius
+            return (new_loc[0] < turn_radius/2 or
+                new_loc[1] > env_y_max - turn_radius/2 or
+                (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < turn_radius**2)
+        case 'west':
+            return new_loc[0] < turn_radius
+        case 'sw':
+            cx = turn_radius
+            cy = turn_radius
+            return (new_loc[0] < turn_radius/2 or
+                new_loc[1] < turn_radius/2 or
+                (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < turn_radius**2)
+        case 'south':
+            return new_loc[1] < turn_radius
+        case 'se':
+            cx = env_x_max - turn_radius
+            cy = turn_radius
+            return (new_loc[0] > env_x_max - turn_radius/2 or
+                new_loc[1] < turn_radius/2 or
+                (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < turn_radius**2)
+
+    return False
+
 def onehot_to_rad(heading_1hot):
     '''
     Parameters
@@ -941,217 +916,3 @@ def onehot_to_rad(heading_1hot):
         return idx*math.pi/4
     
     return
-
-def move_with_heading(
-    heading_1hot: Sequence[int],
-    action: Union[int, str],
-    turn_radius: float,
-    turn_degrees: float = 90.0,               # e.g. 45.0 for finer turning
-    n_headings: int = 8,                      # 4 (NESW), 8 (N,NE,E,SE,...), etc.
-    straight_matches_arc: bool = True,        # straight distance = r*theta
-    forward_step: float = None,               # if provided, overrides above
-    ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Compute (dx, dy) and the new heading after taking a discrete high-level action
-    ('left', 'straight', 'right') from a quantized heading with N bins.
-
-    The turn is a circular arc of radius r through angle θ = turn_degrees (in radians).
-    The straight move is either length r*θ (to match arc length) or a fixed forward_step.
-
-    Parameters
-    ----------
-    heading_1hot : one-hot of length n_headings
-        Current heading bin as a one-hot vector (exactly one '1').
-        Heading index 0 corresponds to angle ψ=0 (pointing along +x),
-        indices increase CCW in steps of 2π / n_headings.
-    action : int or str
-        Either integer in {0,1,2} or string in {"left","straight","right"}.
-    turn_radius : float
-        Turning radius r (same units as your map coordinates).
-    turn_degrees : float
-        Turn angle in degrees for left/right (e.g. 45, 90). Internally converted to radians.
-    n_headings : int
-        Number of discrete heading bins (e.g., 4 or 8).
-    straight_matches_arc : bool
-        If True, straight move distance = r * theta (arc length), so all three actions
-        traverse equal path length. Ignored if `forward_step` is provided.
-    forward_step : float or None
-        If not None, use this distance for the straight action.
-
-    Returns
-    -------
-    dxdy : np.ndarray, shape (2,)
-        World-frame displacement.
-    new_onehot : np.ndarray, shape (n_headings,)
-        One-hot vector for the new heading.
-    new_idx : int
-        New heading index (0..n_headings-1).
-    """
-    # -------- decode current heading index ψ ---------------------------
-    try:
-        h_idx = list(heading_1hot).index(1)
-    except ValueError as e:
-        raise ValueError("heading_1hot must have exactly one 1") from e
-    if not (0 <= h_idx < n_headings):
-        raise ValueError(f"heading index {h_idx} outside 0..{n_headings-1}")
-
-    psi = 2.0 * math.pi * (h_idx / n_headings)   # radians; 0 = +x, CCW positive
-
-    # -------- decode action -------------------------------------------
-    if isinstance(action, str):
-        action = action.lower()
-        if action not in ("left", "straight", "right"):
-            raise ValueError("action must be 'left', 'straight', or 'right'")
-    elif isinstance(action, int) or isinstance(action, np.int64):
-        if action not in (0, 1, 2):
-            raise ValueError("int action must be 0:'left', 1:'straight', 2:'right'")
-        action = ("left", "straight", "right")[action]
-    else:
-        print(f'action.dtype: {type(action)}')
-        raise TypeError("action must be int or str")
-
-    theta = math.radians(turn_degrees)          # arc angle for turns
-    r = float(turn_radius)
-
-    # -------- local-frame displacements --------------------------------
-    # Define a local frame: +y forward (along current heading), +x to the right.
-    # For a left turn by theta on a circle of radius r:
-    #   dx_local = - r * sin(theta)
-    #   dy_local =   r * (1 - cos(theta))
-    # For a right turn: dx_local = + r * sin(theta), dy_local same.
-    if action == "left":
-        dx_local = r * math.sin(theta)
-        dy_local = r * (1 - math.cos(theta))
-        heading_delta_bins = +1                 # rotate CCW by one bin if bins match turn angle
-    elif action == "right":
-        dx_local =  r * math.sin(theta)
-        dy_local =  -r * (1 - math.cos(theta))
-        heading_delta_bins = -1                 # rotate CW by one bin
-    else:  # "straight"
-        # distance for straight move
-        if forward_step is not None:
-            dist = float(forward_step)
-        else:
-            dist = r * theta if straight_matches_arc else r
-        dx_local = dist
-        dy_local = 0.0
-        heading_delta_bins = 0
-
-    # -------- rotate local displacement into world frame ---------------
-    # Local-to-world rotation by current heading angle ψ
-    # local basis: [right, forward]; world x = cosψ*right - sinψ*forward
-    # Using matrix for vector [dx_local, dy_local] where dy_local is along forward:
-    cos_psi, sin_psi = math.cos(psi), math.sin(psi)
-    dx_world =  cos_psi * dx_local - sin_psi * dy_local
-    dy_world =  sin_psi * dx_local + cos_psi * dy_local
-
-    # -------- update heading index -------------------------------------
-    # If the heading lattice step equals the turn angle (e.g., 8 bins + 45°)
-    # then moving left/right advances by exactly one bin. More generally,
-    # we advance by round(theta / (2π / n_headings)) bins.
-    bins_per_turn = int(round(theta / (2 * math.pi / n_headings)))
-    if action == "straight":
-        delta_bins = 0
-    else:
-        delta_bins = int(math.copysign(bins_per_turn, heading_delta_bins))
-    new_idx = (h_idx + delta_bins) % n_headings
-
-    new_onehot = np.zeros(n_headings, dtype=int)
-    new_onehot[new_idx] = 1
-
-    return np.array([dx_world, dy_world], dtype=float), new_onehot
-
-def get_q_values(model, obs):
-    """
-    Return the Q-value vector (one value per discrete action) for a single observation.
-    """
-    # 1. Convert raw obs (np array, dict, …) to a batched torch.Tensor on the
-    #    same device as the policy
-    obs_tensor, _ = model.policy.obs_to_tensor(obs)
-
-    # 2. Extract features (CNN/MLP) exactly as the policy does
-    with torch.no_grad():
-        q_values = model.policy.q_net(obs_tensor)          # shape (1, n_actions)
-
-    return q_values.cpu().numpy().squeeze(0)             # -> (n_actions,)
-
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, NatureCNN
-
-class MapPlusLocExtractor(BaseFeaturesExtractor):
-    def __init__(self, obs_space: spaces.Dict, features_dim=512):
-        super().__init__(obs_space, features_dim)
-        self.cnn = NatureCNN(obs_space["map"], features_dim=256)
-        self.linear = torch.nn.Linear(256 + 10, features_dim)
-
-    def forward(self, obs):
-        device = self.linear.weight.device          # extractor is on same device as policy
-        map_t = obs["map"].to(device).float().div(255.0)  # scale 0-1
-        loc_t = obs["loc"].to(device)
-        hdg_t = obs["hdg"].to(device)
-        map_feats = self.cnn(map_t)
-        return torch.relu(self.linear(torch.cat([map_feats, loc_t, hdg_t], dim=1)))
-
-class CpuDictReplayBuffer(DictReplayBuffer):
-    def __init__(self, *args, sample_device=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.sample_device = torch.device(sample_device) if sample_device else None
-
-    @staticmethod
-    def _to_device(batch: DictReplayBufferSamples, device: torch.device):
-        """Return a *new* DictReplayBufferSamples living on `device`."""
-        obs        = {k: v.to(device) for k, v in batch.observations.items()}
-        next_obs   = {k: v.to(device) for k, v in batch.next_observations.items()}
-        actions    = batch.actions.to(device)
-        rewards    = batch.rewards.to(device)
-        dones      = batch.dones.to(device)
-        return DictReplayBufferSamples(obs, actions, next_obs, dones, rewards)
-
-    # override -----------------------------------------------------------
-    def sample(self, batch_size: int, env=None, device=None):
-        batch = super().sample(batch_size, env=env)   # still on CPU
-
-        target_device = device or self.sample_device
-        if target_device is not None:
-            batch = self._to_device(batch, target_device)
-        return batch
-
-def show_conv3_maps(model, obs):
-    conv3 = model.policy.q_net.features_extractor.cnn.cnn[4]  # 3rd Conv2d
-    feature_bank = {}
-    def _save_features(_, __, output):
-        feature_bank["conv3"] = output.detach().cpu()
-    h = conv3.register_forward_hook(_save_features)
-
-    # ---- 3. forward pass through the extractor -----------------------
-    obs_tensor, _ = model.policy.obs_to_tensor(obs)
-    with torch.no_grad():
-        _ = model.policy.q_net.features_extractor(obs_tensor)
-
-    h.remove()
-    # fmap from the forward hook: shape (1, 64, 9, 9)
-    fmap = feature_bank["conv3"].squeeze(0)          # (64, 9, 9)  remove batch dim
-
-    # per-channel activation energy
-    energy = fmap.abs().mean(dim=(1, 2)).cpu().numpy()   # (64,)
-
-    # bar plot
-    channels = np.arange(len(energy))        # x-positions: 0 … 63
-    fig, axes = plt.subplots(1, 1, figsize=(4.5, 2.0), dpi=300)
-    axes.bar(channels, energy, width=0.8)
-    plt.xlabel("Channel", fontsize=8)
-    plt.ylabel("mean |activation|", fontsize=8)
-    axes.tick_params(axis="both", labelsize=7)
-    plt.tight_layout()
-    plt.show()
-
-    # Top activation channels
-    k = 9
-    top_idx = energy.argsort()[-k:]
-    rows = int(np.ceil(np.sqrt(k)))
-    fig, axes = plt.subplots(rows, rows, figsize=(rows*2, rows*2))
-
-    for ax, idx in zip(axes.flat, top_idx):
-        ax.imshow(fmap[idx], cmap="inferno")
-        ax.set_title(f"ch {idx}", fontsize=6)
-        ax.axis("off")
-    plt.tight_layout(); plt.show()

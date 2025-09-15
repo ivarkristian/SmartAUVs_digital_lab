@@ -38,14 +38,16 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 
 # %%
 # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
-#if torch.backends.mps.is_available():
-#    self.device = torch.device("mps")
+
 device = None
 if device is None:
     if torch.cuda.is_available():
         device = torch.device("cuda")
+    #elif torch.backends.mps.is_available():
+    #    device = torch.device("mps")
     else:
         device = torch.device("cpu")
+    
 
 turn_radius = 25
 channels = np.array([1, 1, 0, 0, 0])

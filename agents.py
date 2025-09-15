@@ -3,6 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
+import dubins
+
+import rl_gas_survey_dubins_agent_env
 
 def argmax_all(a: np.ndarray) -> np.ndarray:
     """
@@ -187,7 +190,7 @@ def compare_envs(envs,
     return fig, axes
 
 class adaptive_agents():
-    def __init__(self, *args, type, obs, kappa=None, gamma=None, debug=False, **kwargs):
+    def __init__(self, *args, type, obs, kappa=None, gamma=None, debug=False, turn_radius=25, **kwargs):
         super().__init__(*args, **kwargs)
         self.type = type
         if self.type not in ['IG', 'UCB', 'DUCB']:
@@ -206,6 +209,9 @@ class adaptive_agents():
         self.loc = (self.loc_action_space + 1)/2 * [self.x_max, self.y_max]
         self.hdg = obs['hdg'] # onehot e.g. [0, 1, 0, 0]
 
+        self.turn_radius = turn_radius
+        self.path_planner = dubins.Dubins(self.turn_radius-3, 1.0) #1.0 - sample every meter
+        
         # tuning params
         self.kappa = kappa or 1.0
         self.gamma = gamma or 1.0
@@ -213,15 +219,16 @@ class adaptive_agents():
         self.debug = debug
         
     
-    def get_action(self, obs):
+    def get_wps_to_max_objective(self, obs):
         obs = obs[0]
 
         self.gas = obs['map'][0]
         self.var = obs['map'][1]
         self.loc_action_space = obs['loc']
         self.loc = (self.loc_action_space + 1)/2 * [self.x_max, self.y_max]
+        self.hdg = obs['hdg']
         if self.debug:
-            print(f'loc_action_space: {self.loc_action_space}, loc: {self.loc}')
+            print(f'loc_action_space: {self.loc_action_space}, loc: {self.loc}, hdg: {self.hdg}')
 
         self.dx = self._coord_x - self.loc[0]
         self.dy = self._coord_y - self.loc[1]
@@ -249,13 +256,60 @@ class adaptive_agents():
             case _:
                 print(f'{self.type} agent not implemented')
         
-        best_value_idx = self._get_best_value_idx(self.map)
-        action = (self._coords[best_value_idx]/[self.x_max, self.y_max]) * 2.0 - 1
-        if self.debug:
-            print(f'Found {self.type} action: {action}')
+        best_value_idx = self._get_idx_sorted_by_value(self.map)
+        found_new_xy = False
+        i = 0
+        while found_new_xy is False:
+            waypoints_per_heading = []
+            new_headings = []
+            new_xy = best_value_idx[i]
+            start = (self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), rl_gas_survey_dubins_agent_env.onehot_to_rad(self.hdg))
+            
+            # For each heading, find a path from start (self.loc, self.hdg) to end (new_xy, new_heading)
+            # Skip end positions that are facing the boundary
+            for heading in range(len(self.hdg)):
+                new_heading = np.zeros(len(self.hdg))
+                new_heading[heading] += 1
+
+                end = (new_xy[0], new_xy[1], rl_gas_survey_dubins_agent_env.onehot_to_rad(new_heading))
+                if not rl_gas_survey_dubins_agent_env.facing_the_boundary(new_xy, new_heading, 250, 250, self.turn_radius):
+                    sample_coords_xy = self.path_planner.dubins_path(start, end)
+                    waypoints_per_heading.append(sample_coords_xy)
+                    new_headings.append(new_heading)
+            
+            # If any paths are found, sort paths by length, and return the shortest one
+            if len(waypoints_per_heading):
+                len_waypoints = [len(wp) for wp in waypoints_per_heading]
+                wp_idx_by_length = self._get_idx_sorted_by_value(len_waypoints)
+                found_new_xy = True
         
-        return action
+        return waypoints_per_heading[wp_idx_by_length], new_headings[wp_idx_by_length]
     
+    def _get_idx_sorted_by_value(field: np.ndarray, ascending: bool = True):
+        """
+        Return indices of `field` sorted by its values.
+
+        Parameters
+        ----------
+        field : np.ndarray
+            1D or ND numeric array.
+        ascending : bool
+            True → smallest first, False → largest first.
+
+        Returns
+        -------
+        idx_list : list[tuple[int, ...]]
+            List of index tuples (i, j, ...) in the requested order.
+        """
+        arr = np.asarray(field)
+        flat = arr.ravel()
+        order = np.argsort(flat, kind="stable")
+        if not ascending:
+            order = order[::-1]
+        # map flat indices back to ND tuples
+        idx_list = [np.unravel_index(i, arr.shape) for i in order]
+        return idx_list
+
     def _get_best_value_idx(self, field):
         # Find idx of field with the highest value.
         # If multiple locations are tied, go to nearest
