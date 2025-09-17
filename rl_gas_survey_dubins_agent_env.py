@@ -238,16 +238,27 @@ class GasSurveyDubinsAgentEnv(gym.Env):
         
         if self.debug:
             self._assert_gpu_consistency()
+        
+        self.init_obs()
 
         obs, _, info = self._get_obs_truncated_info()
         
         if self.timer:
             print(f'reset took: {time.process_time() - t}')
+        
+        # Delete GP model, it will be reconstructed in self._estimate()
+        if hasattr(self, 'mdl'):
+            self.mdl.cpu()
+            del self.mdl
+            
+        if hasattr(self, 'llh'):
+            self.llh.cpu()
+            del self.llh
 
         return obs, info
 
     #@profile
-    def step(self, sample_coords_xy, new_xy, new_heading, speed=1.0, sample_freq=1.0):
+    def step(self, waypoints, heading, speed=1.0, sample_freq=1.0):
         tt = time.process_time()
         t = time.process_time()
         self.n_steps += 1
@@ -259,27 +270,11 @@ class GasSurveyDubinsAgentEnv(gym.Env):
         old_var = self.pred_var_norm # remember to compare with correct new var  (norm, clipped etc.)
         old_pred_mu = self.pred_mu
 
+        sample_coords_xy = waypoints
+
         if self.debug:
             print(f'step: {self.n_steps}')
-        
-        self.new_loc = torch.as_tensor([*new_xy, self.depth], dtype=torch.float32, device=self.device)
-        
-        if self.timer:
-            print(f't0 step: {time.process_time()-t}')
-
-        if torch.allclose(self.loc, self.new_loc):
-            obs, truncated, info = self._get_obs_truncated_info()
-            reward += -5.0
-            self.acc_reward += reward
-            if self.debug:
-                print(f'torch.allclose = True')
-            return obs, float(reward), self.terminated, truncated, info
-
-        t = time.process_time()
-        
-        if self.timer:
-            print(f't1 step: {time.process_time()-t}')
-        
+             
         measurements = np.zeros(len(sample_coords_xy), dtype=np.float32)
         radius = 1.0 # Radius of sample averaging
         
@@ -314,10 +309,10 @@ class GasSurveyDubinsAgentEnv(gym.Env):
             print(f't3 step: {time.process_time()-t}')
         
         # Update location
-        self.loc = self.new_loc.detach()
-        self.heading = new_heading
+        self.loc = waypoints[-1]
+        self.heading = heading
 
-        self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
+        self.make_circle(self.loc[0], self.loc[1], self.location_radius)
         
         obs, truncated, info = self._get_obs_truncated_info()
         
@@ -344,6 +339,32 @@ class GasSurveyDubinsAgentEnv(gym.Env):
     def close():
         pass
     
+    def init_obs(self):
+        # Sample starting position and 1 m behind
+        a = math.pi*self.heading.argmax()/4
+        mb = (self.loc[0] - math.cos(a), self.loc[1] - math.sin(a))
+        sample_coords_xy = np.array([(self.loc[0], self.loc[1]), (mb[0], mb[1])])
+
+        measurements = np.zeros(len(sample_coords_xy), dtype=np.float32)
+        radius = 1.0 # Radius of sample averaging
+        
+        for c, coord in enumerate(sample_coords_xy):
+            measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.env_x_np, self.env_y_np, self.env_vals_np, coord, radius)
+
+        if self.debug:
+            if np.isnan(measurements).sum():
+                print(f'Measurements contains nans')
+                agents.plot_n(x=sample_coords_xy[:, 0], y=sample_coords_xy[:, 1], data_list=[np.ones_like(sample_coords_xy[:, 0])], path=sample_coords_xy)
+        
+        end_idx = self.sample_idx + len(sample_coords_xy)
+        # Store new samples into the preallocated tensors
+        self.sampled_coords[self.sample_idx:end_idx] = torch.as_tensor(sample_coords_xy, device=self.device, dtype=self.sampled_coords.dtype)
+        self.sampled_vals[self.sample_idx:end_idx] = torch.as_tensor(measurements, device=self.device, dtype=self.sampled_vals.dtype)
+        self.sample_idx = end_idx
+
+        self._estimate() # fill self.pred_mu, self.pred_var and norms
+        return
+
     def _reward_e2e(self, old_pred_mu):
         old_rms = np.sqrt((old_pred_mu - self.obs_truth).mean()**2)
         rms = np.sqrt((self.pred_mu - self.obs_truth).mean()**2)
@@ -567,8 +588,8 @@ class GasSurveyDubinsAgentEnv(gym.Env):
 
     def _get_obs_truncated_info(self):
         layers_uint8  = self._render_layers()
-        loc_x = ((self.loc[0]/self.env_x_max)*2.0 - 1.0).cpu()
-        loc_y = ((self.loc[1]/self.env_y_max)*2.0 - 1.0).cpu()
+        loc_x = ((self.loc[0]/self.env_x_max)*2.0 - 1.0)
+        loc_y = ((self.loc[1]/self.env_y_max)*2.0 - 1.0)
 
         obs_dict = {
             "map": layers_uint8,           # (C,H,W)
@@ -609,15 +630,22 @@ class GasSurveyDubinsAgentEnv(gym.Env):
 
     #@profile
     def _estimate(self):
-        if self.mdl is None:
+        if not hasattr(self, 'mdl'):
             if self.debug:
                 print(f'Created model in ._estimate()')
+            self.llh = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
             self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals-self.mu_all, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const).to(self.device)
+            self.mdl.covar_module.outputscale = self.sigma2_all
+            self.mdl.eval()
+            self.llh.eval()
+            new_model = True
+        else:
+            new_model = False
         
         t = time.process_time()
         #self.mdl.set_train_data(
         #    inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
-        if len(self.mdl.train_targets) > 0:
+        if len(self.mdl.train_targets) > 0 and new_model == False:
             # not first prediction, use fantasy mdl
             self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all).to(self.device)
             self.sample_idx_mdl = self.sample_idx
@@ -687,8 +715,8 @@ class GasSurveyDubinsAgentEnv(gym.Env):
             self.pred_mu_norm_clipped,     # idx 0
             self.pred_var_norm_clipped,  # idx 1
             self.location,     # idx 2
-            self.coord_y_norm,     # idx 3
-            self.coord_x_norm      # idx 4
+            self._coord_y,     # idx 3
+            self._coord_x      # idx 4
         ]
 
         # Select the ones flagged by `self.channels`
@@ -701,7 +729,7 @@ class GasSurveyDubinsAgentEnv(gym.Env):
             "Mismatch between channel mask and selected layers"
 
         # Stack into (C, H, W) NumPy array expected by Gym
-        stacked = np.stack(chosen_layers, axis=0).astype(np.uint8)
+        stacked = np.stack(chosen_layers, axis=0)#.astype(np.uint8)
         return stacked
     
     def _normalize_pred_layers(self):

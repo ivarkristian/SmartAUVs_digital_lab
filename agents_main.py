@@ -5,11 +5,11 @@ import copy
 
 import agents
 import rl_scenario_bank
-import rl_gas_survey_dubins_env
+import rl_gas_survey_dubins_agent_env
 
 # %%
 importlib.reload(agents)
-importlib.reload(rl_gas_survey_dubins_env)
+importlib.reload(rl_gas_survey_dubins_agent_env)
 importlib.reload(rl_scenario_bank)
 
 # %%
@@ -23,7 +23,7 @@ bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1
 # %%
 channels = np.array([1, 1, 0, 1, 1])
 turn_radius = 25
-env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], turn_radius=turn_radius, channels=channels, timer=False, debug=False)
+env = rl_gas_survey_dubins_agent_env.GasSurveyDubinsAgentEnv(bank, gp_pred_resolution=[100, 100], r_weights=[1.0, 1.0, 1.0], turn_radius=turn_radius, channels=channels, timer=False, debug=False)
 
 # %%
 # Reset all environments
@@ -36,11 +36,10 @@ ducb_env = copy.deepcopy(env)
 # %%
 kappa = 255/20.0
 gamma = -1.0
-ig_ag = agents.adaptive_agents(type='IG', obs=obs, debug=False)
-ucb_ag = agents.adaptive_agents(type='UCB', obs=obs, kappa=kappa, debug=False)
-ducb_ag = agents.adaptive_agents(type='DUCB', obs=obs, kappa=kappa, gamma=gamma, debug=False)
+ig_ag = agents.adaptive_agents(model_type='IG', obs=obs, debug=False)
+ucb_ag = agents.adaptive_agents(model_type='UCB', obs=obs, kappa=kappa, debug=False)
+ducb_ag = agents.adaptive_agents(model_type='DUCB', obs=obs, kappa=kappa, gamma=gamma, debug=False)
 
-# %%
 # Agents must take obs and select location based on maximizing objective
 # Then compute waypoints to location (exclude illegal waypoints out of bounds)
 # Compute routes for all eight possible end headings.
@@ -50,26 +49,29 @@ ducb_ag = agents.adaptive_agents(type='DUCB', obs=obs, kappa=kappa, gamma=gamma,
 
 # Send waypoints to environment instead of action left, straight, right
 # Therefore, the agents need a tailored environment class...
-ig_wps = ig_ag.get_wps_to_max_objective(obs=obs)
-ucb_wps = ucb_ag.get_wps_to_max_objective(obs=obs)
-ducb_wps = ducb_ag.get_wps_to_max_objective(obs=obs)
-n_samples_lim = 1000
 
 # %%
 # Sample up to at least n_samples_lim samples
+n_samples_lim = 1000
+
+# %%
+ig_wps, ig_hdg = ig_ag.get_wps_to_max_objective(obs=obs)
 while ig_env.sample_idx < n_samples_lim:
-    ig_wps = ig_ag.get_wps_to_max_objective(ig_env.step(ig_wps))
+    ig_wps, ig_hdg = ig_ag.get_wps_to_max_objective(ig_env.step(waypoints=ig_wps, heading=ig_hdg))
 ig_env.sample_idx = n_samples_lim
 ig_env._estimate()
 
+# %%
+ucb_wps, ucb_hdg = ucb_ag.get_wps_to_max_objective(obs=obs)
 while ucb_env.sample_idx < n_samples_lim:
-    ucb_wps = ucb_ag.get_wps_to_max_objective(ucb_env.step(ucb_wps))
+    ucb_wps, ucb_hdg = ucb_ag.get_wps_to_max_objective(ucb_env.step(waypoints=ucb_wps, heading=ucb_hdg))
 ucb_env.sample_idx = n_samples_lim
 ucb_env._estimate()
 
 # %%
+ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
 while ducb_env.sample_idx < n_samples_lim:
-    ducb_wps = ducb_ag.get_wps_to_max_objective(ducb_env.step(ducb_wps))
+    ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(ducb_env.step(waypoints=ducb_wps, heading=ducb_hdg))
     agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_env.pred_mu, ducb_env.pred_mu_norm_clipped], titles=["pred_mu", "pred_mu_norm_clipped"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
     agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_ag.gas_scaled, ducb_ag.map], titles=["gas_scaled", "ducb map"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
 ducb_env.sample_idx = n_samples_lim

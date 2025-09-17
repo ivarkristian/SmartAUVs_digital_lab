@@ -3,8 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
-import dubins
+from typing import List, Tuple
+import math
 
+import dubins
 import rl_gas_survey_dubins_agent_env
 
 def argmax_all(a: np.ndarray) -> np.ndarray:
@@ -189,10 +191,64 @@ def compare_envs(envs,
 
     return fig, axes
 
+def in_square(coords: np.ndarray,
+              min_x: float, max_x: float,
+              min_y: float, max_y: float,
+              strict: bool = True,
+              return_points: bool = False):
+    """
+    Check which (x, y) coords lie inside the axis-aligned square/rectangle.
+
+    Parameters
+    ----------
+    sample_coords : np.ndarray, shape (N, 2)
+        Array of [x, y] coordinates.
+    min_x, max_x, min_y, max_y : float
+        Bounds of the square/rectangle.
+    strict : bool
+        If True, use strict inequalities (min < x < max, min < y < max).
+        If False (default), include the boundary (min <= x <= max ...).
+    return_points : bool
+        If True, also return the filtered coordinates.
+
+    Returns
+    -------
+    mask : np.ndarray, shape (N,)
+        Boolean mask where True means the point is inside.
+    points_inside : np.ndarray, shape (M, 2)
+        Only if return_points=True: the points that are inside.
+    """
+    x = coords[:, 0]
+    y = coords[:, 1]
+    if strict:
+        mask = (x > min_x) & (x < max_x) & (y > min_y) & (y < max_y)
+    else:
+        mask = (x >= min_x) & (x <= max_x) & (y >= min_y) & (y <= max_y)
+
+    if return_points:
+        return mask, coords[mask]
+    return mask
+
+def in_circle(coords: np.ndarray,
+              cx: float, cy: float, r: float,
+              strict: bool = True,
+              return_points: bool = False):
+    x = coords[:, :, 0]
+    y = coords[:, :, 1]
+    if strict:
+        mask = (cx - x)**2 + (cy - y)**2 < r*r
+    else:
+        mask = (cx - x)**2 + (cy - y)**2 <= r*r
+    
+    if return_points:
+        return mask, coords[mask]
+    return mask
+
 class adaptive_agents():
-    def __init__(self, *args, type, obs, kappa=None, gamma=None, debug=False, turn_radius=25, **kwargs):
+    def __init__(self, *args, model_type, obs, kappa=None, gamma=None, debug=False, turn_radius=25, **kwargs):
         super().__init__(*args, **kwargs)
-        self.type = type
+        
+        self.type = model_type
         if self.type not in ['IG', 'UCB', 'DUCB']:
             print(f'Agent type {self.type} not recognized.')
         
@@ -217,7 +273,6 @@ class adaptive_agents():
         self.gamma = gamma or 1.0
 
         self.debug = debug
-        
     
     def get_wps_to_max_objective(self, obs):
         obs = obs[0]
@@ -234,36 +289,59 @@ class adaptive_agents():
         self.dy = self._coord_y - self.loc[1]
         self.dist = np.hypot(self.dx, self.dy)
 
+        # - Turn radius masks -
+        # Find center of circles
+        pi = math.pi
+        a = pi*self.hdg.argmax()/4
+        rc_rot = a - pi/2
+        lc_rot = a + pi/2
+        rc_centre = (self.loc[0] + math.cos(rc_rot)*self.turn_radius, self.loc[1] + math.sin(rc_rot)*self.turn_radius)
+        lc_centre = (self.loc[0] + math.cos(lc_rot)*self.turn_radius, self.loc[1] + math.sin(lc_rot)*self.turn_radius)
+
+        # Compute left and right masks and total turn radius mask
+        rc_mask = in_circle(self._coords, rc_centre[0], rc_centre[1], self.turn_radius)
+        lc_mask = in_circle(self._coords, lc_centre[0], lc_centre[1], self.turn_radius)
+        rc_dist = rc_mask*(self.dist - self.turn_radius*2)
+        lc_dist = lc_mask*(self.dist - self.turn_radius*2)
+        self.turn_radius_mask = rc_dist + lc_dist
+
         match self.type:
             case 'IG':
                 # Highest entropy reduction, in practice go to location with max variance
                 # If multiple locations are tied, go to nearest
-                self.map = self.var
+                self.map = self.var + self.turn_radius_mask
 
             case 'UCB':
                 # Balances entropy reduction with sampling of high concentrations
                 # If multiple locations are tied, go to nearest
                 self.gas_scaled = np.clip(self.gas * self.kappa, 0, 255)
-                self.map = self.gas_scaled + self.var
+                self.map = self.gas_scaled + self.var + self.turn_radius_mask
 
             case 'DUCB':
                 # Balances entropy reduction with sampling of high concentrations
                 # and distance
                 # If multiple locations are tied, go to nearest
                 self.gas_scaled = np.clip(self.gas * self.kappa, 0, 255)
-                self.map = self.gas_scaled + self.var + self.dist * self.gamma
+                self.map = self.gas_scaled + self.var + self.dist * self.gamma + self.turn_radius_mask
 
             case _:
                 print(f'{self.type} agent not implemented')
         
-        best_value_idx = self._get_idx_sorted_by_value(self.map)
+        best_value_idx = self._idx_sorted_by_value_then_distance(field=self.map, ascending_value=False)
+        if self.debug:
+            print(f'Top map indexes: {best_value_idx[:3]}')
+            print("chosen max-value locations:", [self._coords[lo] for lo in best_value_idx[:3]],
+                "value:", [self.map[lo] for lo in best_value_idx[:3]],
+                "distance:", [self.dist[lo] for lo in best_value_idx[:3]])
+
+
         found_new_xy = False
         i = 0
         while found_new_xy is False:
             waypoints_per_heading = []
             new_headings = []
-            new_xy = best_value_idx[i]
-            start = (self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), rl_gas_survey_dubins_agent_env.onehot_to_rad(self.hdg))
+            new_xy = self._coords[best_value_idx[i]]
+            start = (self.loc[0], self.loc[1], rl_gas_survey_dubins_agent_env.onehot_to_rad(self.hdg))
             
             # For each heading, find a path from start (self.loc, self.hdg) to end (new_xy, new_heading)
             # Skip end positions that are facing the boundary
@@ -274,18 +352,69 @@ class adaptive_agents():
                 end = (new_xy[0], new_xy[1], rl_gas_survey_dubins_agent_env.onehot_to_rad(new_heading))
                 if not rl_gas_survey_dubins_agent_env.facing_the_boundary(new_xy, new_heading, 250, 250, self.turn_radius):
                     sample_coords_xy = self.path_planner.dubins_path(start, end)
-                    waypoints_per_heading.append(sample_coords_xy)
-                    new_headings.append(new_heading)
+                    inside_bools = in_square(sample_coords_xy, 0, self.x_max, 0, self.y_max)
+                    
+                    if inside_bools.sum() == len(sample_coords_xy):
+                        waypoints_per_heading.append(sample_coords_xy)
+                        new_headings.append(new_heading)
             
             # If any paths are found, sort paths by length, and return the shortest one
             if len(waypoints_per_heading):
                 len_waypoints = [len(wp) for wp in waypoints_per_heading]
                 wp_idx_by_length = self._get_idx_sorted_by_value(len_waypoints)
+                wp_idx_by_length = [idx[0] for idx in wp_idx_by_length]
                 found_new_xy = True
+                if self.debug:
+                    print(f'Possible valid paths were found. len_waypoints: {len_waypoints} ')
+                    print(f'Sorted indexes of path by length: {wp_idx_by_length}')
+                    #print(f'Shortest path: {waypoints_per_heading[wp_idx_by_length[0]]}')
+            else:
+                if self.debug:
+                    print(f'No valid waypoints found for new_xy={new_xy}')
+            
+            i += 1
         
-        return waypoints_per_heading[wp_idx_by_length], new_headings[wp_idx_by_length]
+        return waypoints_per_heading[wp_idx_by_length[0]], new_headings[wp_idx_by_length[0]]
+
+    def _idx_sorted_by_value_then_distance(self,
+        field: np.ndarray,
+        ascending_value: bool = True,
+        ascending_distance: bool = True,
+    ) -> List[Tuple[int, ...]]:
+        """ Return indices of `field` sorted by value, breaking ties by `distances`.
+
+        Parameters
+        ----------
+        field : np.ndarray
+            1D or ND array of values to sort by (primary key).
+        distances : np.ndarray
+            Same shape as `field`; used as secondary key (tie-breaker).
+        ascending_value : bool
+            Sort values ascending if True, descending if False.
+        ascending_distance : bool
+            Sort distances ascending if True (closer first), descending if False.
+
+        Returns
+        -------
+        idx_list : list[tuple[int, ...]]
+            Indices into `field` in the requested order. """
+
+        arr = np.asarray(field)
+        dist = np.asarray(self.dist)
+        if arr.shape != dist.shape:
+            raise ValueError(f"Shape mismatch: field {arr.shape} vs distances {dist.shape}")
+
+        v = arr.ravel()
+        d = dist.ravel()
+
+        # Keys: last key is primary for lexsort
+        vkey = v if ascending_value else -v
+        dkey = d if ascending_distance else -d
+
+        order = np.lexsort((dkey, vkey))  # primary: value; secondary: distance
+        return [np.unravel_index(i, arr.shape) for i in order]
     
-    def _get_idx_sorted_by_value(field: np.ndarray, ascending: bool = True):
+    def _get_idx_sorted_by_value(self, field: np.ndarray, ascending: bool = True):
         """
         Return indices of `field` sorted by its values.
 
@@ -304,6 +433,8 @@ class adaptive_agents():
         arr = np.asarray(field)
         flat = arr.ravel()
         order = np.argsort(flat, kind="stable")
+        if self.debug:
+            print(f'type(ascending): {type(ascending)} ascending: {ascending}')
         if not ascending:
             order = order[::-1]
         # map flat indices back to ND tuples
