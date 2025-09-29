@@ -106,7 +106,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.rotation = random.choice([-90, 0, 90, 180])
         random_scenario = self.scenario_bank.sample()
 
-        env_xy = self._rotate_xy(random_scenario['coords'].to(self.device), self.rotation)
+        env_xy = rotate_xy(random_scenario['coords'].to(self.device), self.rotation)
         values = random_scenario['values'].to(self.device)
 
         # Offset so that source is not always in the middle
@@ -158,10 +158,10 @@ class GasSurveyDubinsEnv(gym.Env):
 
         obs_truth = np.zeros(len(self._coords_flat), dtype=np.float32)
         radius = 2.0
-        for c, coord in enumerate(self._coords_flat.cpu().numpy()):
-            obs_truth[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.env_x_np, self.env_y_np, self.env_vals_np, coord, radius)
+        #for c, coord in enumerate(self._coords_flat.cpu().numpy()):
+        #    obs_truth[c] = chem_utils.extract_synoptic_chemical_data_from_depth(self.env_x_np, self.env_y_np, self.env_vals_np, coord, radius)
         
-        self.obs_truth = obs_truth.reshape(self.obs_y, self.obs_x)
+        #self.obs_truth = obs_truth.reshape(self.obs_y, self.obs_x)
 
         self.pred_mu_norm = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
         self.pred_mu_norm_clipped = np.zeros((self.obs_y, self.obs_x), dtype=np.uint8)
@@ -612,29 +612,6 @@ class GasSurveyDubinsEnv(gym.Env):
         y_idx = min(int(round(loc[1] / (self.env_y_max / self.obs_y))), self.obs_y - 1)
         return x_idx, y_idx
     
-    def _rotate_xy(self, env_xy: torch.Tensor, d: float | int) -> torch.Tensor:
-        """
-        Rotate 2-D coordinates `env_xy` by `d` degrees **clockwise**.
-
-        Returns
-        -------
-        rotated : (N, 2) torch.Tensor
-            Rotated coordinates, same dtype and device as `env_xy`.
-        """
-        t = torch.tensor([env_xy[:, 0].mean(), env_xy[:, 1].mean()], device=env_xy.device)
-        env_xy_zero_translated = env_xy - t
-        # ensure float dtype on the same device as the input
-        theta = torch.deg2rad(torch.as_tensor(d, dtype=env_xy.dtype,
-                                            device=env_xy.device))
-
-        c, s = torch.cos(theta), torch.sin(theta)
-        rot_mat = torch.stack((torch.stack(( c,  -s)),
-                            torch.stack((s,  c))))
-        
-        env_xy_rot = env_xy_zero_translated @ rot_mat.T
-
-        return env_xy_rot + t
-
     def _get_obs_truncated_info(self):
         layers_uint8  = self._render_layers()
         loc_x = ((self.loc[0]/self.env_x_max)*2.0 - 1.0).cpu()
@@ -919,6 +896,29 @@ class GasSurveyDubinsEnv(gym.Env):
         v_shift = img_shift.ravel()[np.argsort(order)]
 
         return v_shift
+
+def rotate_xy(env_xy: torch.Tensor, d: float | int) -> torch.Tensor:
+    """
+    Rotate 2-D coordinates `env_xy` by `d` degrees **clockwise**.
+
+    Returns
+    -------
+    rotated : (N, 2) torch.Tensor
+        Rotated coordinates, same dtype and device as `env_xy`.
+    """
+    t = torch.tensor([env_xy[:, 0].mean(), env_xy[:, 1].mean()], device=env_xy.device)
+    env_xy_zero_translated = env_xy - t
+    # ensure float dtype on the same device as the input
+    theta = torch.deg2rad(torch.as_tensor(d, dtype=env_xy.dtype,
+                                        device=env_xy.device))
+
+    c, s = torch.cos(theta), torch.sin(theta)
+    rot_mat = torch.stack((torch.stack(( c,  -s)),
+                        torch.stack((s,  c))))
+    
+    env_xy_rot = env_xy_zero_translated @ rot_mat.T
+
+    return env_xy_rot + t
 
 def onehot_to_rad(heading_1hot):
     '''
