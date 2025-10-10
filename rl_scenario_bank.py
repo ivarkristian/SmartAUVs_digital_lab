@@ -171,20 +171,26 @@ class ScenarioBank:
 
         return
 
-    def plot_env(self, env_num=0, title_postfix=None, path=None):
+    def plot_env(self, env_num=0, title_postfix=None, path=None, x_range=[0, 250], y_range=[0, 250]):
         if len(self.environments) <= env_num:
             print(f'Bank contains only {len(self.environments)}. Tried to plot #{env_num}')
             return
         
         env = self.environments[env_num]
         if env['parameter']:
+            x = env['coords'][:, 0]
+            y = env['coords'][:, 1]
+            c = env['values']
             fig, ax = plt.subplots(figsize=(8, 6))
-            scatter = ax.scatter(ç)
-            if path:
-                ax.scatter(path[:, 0], path[:, 1], c='black', s=2)
+            scatter = ax.scatter(x, y, c=c, cmap='coolwarm', s=1, vmin=c.min(), vmax=c.max())
+            if path is not None:
+                ax.scatter(path[:, 0], path[:, 1], c='black', s=1)
+            
+            ax.set_xlim(x_range[0], x_range[1])
+            ax.set_ylim(y_range[0], y_range[1])
             
             cbar = fig.colorbar(scatter, ax=ax)
-            cbar.set_label('Value')
+            cbar.set_label('Value)')
 
             # Add labels and title
             ax.set_xlabel('Easting [m]')
@@ -194,6 +200,37 @@ class ScenarioBank:
             return fig, ax
         
         print(f"Could not plot dataset = {self.dataset}, parameter = {env['parameter']}")
+    
+    def plot_above_threshold(self, threshold=None):
+
+        if threshold is None:
+            threshold = self.get_minmax()[0]
+
+        # compute percentage above threshold for each environment
+        percentages = []
+        for env in self.environments:
+            vals = np.asarray(env['values'])
+            pct = (vals > threshold).sum() / len(vals) * 100
+            percentages.append(pct)
+
+        # sort values and create labels
+        sorted_idx = np.argsort(percentages)[::-1]
+        sorted_pcts = np.array(percentages)[sorted_idx]
+
+        # plot
+        fig = plt.figure(figsize=(8, 5))
+        bars = plt.bar(range(len(sorted_pcts)), sorted_pcts, color='black', edgecolor=None, width=1.0)
+
+        ax = plt.gca()
+        ax.tick_params(labelsize=16)
+        plt.ylabel(f'% of locations > {threshold}', fontsize=16)
+        plt.xlabel(f'Environments in scenario 1', fontsize=16)
+        #plt.title('Share of high-concentration locations', fontsize=12)
+        plt.grid(axis='y', linestyle='--', alpha=0.5)
+
+        plt.tight_layout()
+        fig.savefig(f"figures/percentage_above_{threshold}.eps", format="eps", dpi=300, bbox_inches="tight")
+        return fig
 
     def sample(self):
         return random.choice(self.environments)

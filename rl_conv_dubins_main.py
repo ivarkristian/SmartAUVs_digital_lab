@@ -70,7 +70,7 @@ replay_buffer = rl_gas_survey_dubins_env.CpuDictReplayBuffer(
 host = socket.gethostname().split('.')[0]
 if host in ['dunder', 'cupid', 'dancer', 'rudolph', 'dasher']:
     parent_dir = "/projects/robin/users/ivarkriw"
-    log_interval = 100
+    log_interval = 1000
 else:
     parent_dir = '.'
     log_interval = 30

@@ -41,8 +41,8 @@ def cross(center, length=10):
         Coordinates of the cross pattern.
     """
     lines = [
-        [[-length/2, 0, 0], [length/2, 0, 0]],
-        [[0, -length/2, 0], [0, length/2, 0]]
+        [-length/2, 0, 0], [length/2, 0, 0],
+        [0, -length/2, 0], [0, length/2, 0]
     ]
     return np.array([line + center for line in lines])
 
@@ -63,10 +63,10 @@ def crisscross(center, length=10):
         Coordinates of the crisscross pattern.
     """
     lines = [
-        [[-length/2, 0, 0], [length/2, 0, 0]],
-        [[0, -length/2, 0], [0, length/2, 0]],
-        [[-length/2, -length/2, 0], [length/2, length/2, 0]],
-        [[-length/2, length/2, 0], [length/2, -length/2, 0]]
+        [-length/2, 0, 0], [length/2, 0, 0],
+        [0, -length/2, 0], [0, length/2, 0],
+        [-length/2, -length/2, 0], [length/2, length/2, 0],
+        [-length/2, length/2, 0], [length/2, -length/2, 0]
     ]
     return np.array([line + center for line in lines])
 
@@ -114,10 +114,10 @@ def square(center, length=10):
     """
     half = length / 2
     lines = [
-        [[-half, -half, 0], [half, -half, 0]],
-        [[half, -half, 0], [half, half, 0]],
-        [[half, half, 0], [-half, half, 0]],
-        [[-half, half, 0], [-half, -half, 0]]
+        [-half, -half, 0], [half, -half, 0],
+        [half, -half, 0], [half, half, 0],
+        [half, half, 0], [-half, half, 0],
+        [-half, half, 0], [-half, -half, 0]
     ]
     return np.array([line + center for line in lines])
 

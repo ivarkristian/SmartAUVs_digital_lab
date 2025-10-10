@@ -1,6 +1,7 @@
 import pandas as pd
 from pandas.api.indexers import BaseIndexer
 import numpy as np
+import matplotlib.pyplot as plt
 # filters = {
 #     'angle': [30, 60], (inclusive interval)
 #     'angle_open': [None, 60], (open-ended interval)
@@ -23,6 +24,26 @@ class CustomIndexer(BaseIndexer):
             end[i] = max(i + max_right, 1) # to avoid start[i] = end[i] = 0
         
         return start, end
+
+def plot_env(x, y, c, path=None, x_range=[0, 250], y_range=[0, 250], title=''):
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        scatter = ax.scatter(x, y, c=c, cmap='coolwarm', s=1, vmin=c.min(), vmax=c.max())
+        if path is not None:
+            ax.scatter(path[:, 0], path[:, 1], c='black', s=1)
+        
+        ax.set_xlim(x_range[0], x_range[1])
+        ax.set_ylim(y_range[0], y_range[1])
+        
+        cbar = fig.colorbar(scatter, ax=ax)
+        cbar.set_label(f'Value')
+
+        # Add labels and title
+        ax.set_xlabel('Easting [m]')
+        ax.set_ylabel('Northing [m]')
+        ax.set_title(title)
+
+        return fig, ax
 
 def filter_df(df, filters):
     df_filtered = df.copy()
