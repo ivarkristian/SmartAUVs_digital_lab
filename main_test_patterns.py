@@ -102,9 +102,14 @@ depth = 68
 start_time = '2020-01-01T02:10:00.000000000'
 sample_freq = 1.0  # Sample frequency in Hz (samples per second)
 threshold = 550  # Threshold for the chemical data variable
-pattern_funcs = [bowtie, cross, crisscross, drifting_circle, square, leaf_clover, spiral]
-pattern_func = bowtie
-trigger_dist = 10
+# We can compare the following patterns:
+#[bowtie, four-leaf (double bowtie), severdighet (dubins square), spiral, drifting circle]
+# (If we have no info about the current, compare four-leaf, severdighet and spiral)
+# (If we use current direction info, compare tilted bowtie and drifting circle)
+#pattern_funcs = [bowtie, cross, crisscross, drifting_circle, square, leaf_clover, spiral]
+pattern_funcs = [bowtie_double, square_dubins]
+#pattern_func = bowtie
+trigger_dist = 100
 
 # %%
 # Generate waypoints
@@ -153,7 +158,7 @@ for pattern_func in pattern_funcs:
                 new_trigger = False
                 triggered_locs.append(coord)
                 pattern_waypoints = pattern_func(np.array([coord[0], coord[1], depth]))
-                
+
                 pattern_sample_coords_times_list = path.path(pattern_waypoints, start_time, speed, sample_freq, synoptic=True)
                 sample_coords_xy_pattern = [(row[0], row[1]) for row in pattern_sample_coords_times_list]
                 measurements = np.pad(measurements, (0, len(sample_coords_xy_pattern)), mode='constant', constant_values=0)
@@ -170,7 +175,7 @@ for pattern_func in pattern_funcs:
 
     
     # Plot the final path
-    title = f"Time {random_scenario['time']}, {random_scenario['parameter']} at -{random_scenario['depth']}m. ({random_scenario['cur_str']:.2}m/s @ {round(random_scenario['cur_dir'])} deg)"
+    title = f"{pattern_func.__name__}, {random_scenario['parameter']} at -{random_scenario['depth']}m. ({random_scenario['cur_str']:.2}m/s @ {round(random_scenario['cur_dir'])} deg)"
     analysis_utils.plot_env(x=env_xy[:, 0], y=env_xy[:, 1], c=values, path=sample_coords_xy_total, title=title)
 
 

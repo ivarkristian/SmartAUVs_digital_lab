@@ -1,4 +1,6 @@
 import numpy as np
+import path_utils
+import dubins
 
 def bowtie(center, a=10, steps=30):
     """
@@ -23,6 +25,22 @@ def bowtie(center, a=10, steps=30):
     y = a * np.sin(t) * np.cos(t)
     z = np.zeros(steps)
     return np.column_stack((x, y, z)) + center
+
+def bowtie_tilted(center, a=10, steps=30, tilt_angle=0):
+    waypoints = bowtie(center, a, steps)
+    xy_coords = [(item[0], item[1]) for item in waypoints]
+    z_coords = [item[2] for item in waypoints]
+    
+    xy_coords_translated = xy_coords - center[:2]
+    rotated_coords = path_utils.rotate_points(np.array(xy_coords_translated), tilt_angle)
+    
+    rotated_coords_xyz = [(rot_coord[0], rot_coord[1], z_coords[i]) for i, rot_coord in enumerate(rotated_coords)]
+    return rotated_coords_xyz + center
+
+def bowtie_double(center, a=10, steps=30):
+    bowtie_coords = bowtie(center, a, steps)
+    bowtie_tilted_coords = bowtie_tilted(center, a, steps, tilt_angle=90)
+    return np.vstack((bowtie_coords, bowtie_tilted_coords))
 
 def cross(center, length=10):
     """
@@ -114,12 +132,42 @@ def square(center, length=10):
     """
     half = length / 2
     lines = [
+        [-half, half, 0], [-half, -half, 0],
         [-half, -half, 0], [half, -half, 0],
         [half, -half, 0], [half, half, 0],
-        [half, half, 0], [-half, half, 0],
-        [-half, half, 0], [-half, -half, 0]
+        [half, half, 0], [-half, half, 0]
     ]
     return np.array([line + center for line in lines])
+
+def square_dubins(center, length=20, turn_radius=5, point_sep=1.0):
+    """
+    Generates a square pattern centered at a specified point. The lines
+    in the square at connected with dubins paths with the specified turn radius.
+    """
+    waypoints = square(center, length)
+    orientations = np.deg2rad([-90, -90, 0, 0, 90, 90, 180, 180])
+
+    # verify that orientations and waypoints have same length
+    planner = dubins.Dubins(radius=turn_radius, point_separation=point_sep)
+    start = (center[0], center[1], 90)
+    end = (waypoints[0][0], waypoints[0][1], orientations[0])
+    print(f'start:{start} end: {end}')
+    waypoints_dubins = planner.dubins_path(start, end)
+
+    for i in range(len(orientations)-1):
+        start = (waypoints[i][0], waypoints[i][1], orientations[i])
+        end = (waypoints[i+1][0], waypoints[i+1][1], orientations[i+1])
+        print(f'start:{start} end: {end}')
+        new_points = planner.dubins_path(start, end)
+        waypoints_dubins = np.vstack((waypoints_dubins, new_points))
+
+    start = (waypoints[-1][0], waypoints[-1][1], orientations[-1])
+    end = (center[0], center[1], 90)
+    print(f'start:{start} end: {end}')
+    new_points = planner.dubins_path(start, end)
+    waypoints_dubins = np.vstack((waypoints_dubins, new_points))
+
+    return [(wp[0], wp[1], center[2]) for wp in waypoints_dubins]
 
 def leaf_clover(center, radius=10, steps=30):
     """

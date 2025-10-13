@@ -1,6 +1,4 @@
 import numpy as np
-
-import numpy as np
 import torch
 
 def rotate_points(coordinates, angle_deg):
