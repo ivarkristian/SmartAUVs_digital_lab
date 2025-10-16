@@ -11,11 +11,9 @@ import random
 import matplotlib.pyplot as plt
 import time
 from typing import Tuple, Union, Sequence
-from stable_baselines3.common.buffers import DictReplayBuffer, DictReplayBufferSamples
 from scipy.ndimage import shift      # comes with SciPy
 
 import dubins
-
 from gpt_class_exactgpmodel import ExactGPModel
 import chem_utils
 import agents
@@ -1091,29 +1089,6 @@ class MapPlusLocExtractor(BaseFeaturesExtractor):
         map_feats = self.cnn(map_t)
         return torch.relu(self.linear(torch.cat([map_feats, loc_t, hdg_t], dim=1)))
 
-class CpuDictReplayBuffer(DictReplayBuffer):
-    def __init__(self, *args, sample_device=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.sample_device = torch.device(sample_device) if sample_device else None
-
-    @staticmethod
-    def _to_device(batch: DictReplayBufferSamples, device: torch.device):
-        """Return a *new* DictReplayBufferSamples living on `device`."""
-        obs        = {k: v.to(device) for k, v in batch.observations.items()}
-        next_obs   = {k: v.to(device) for k, v in batch.next_observations.items()}
-        actions    = batch.actions.to(device)
-        rewards    = batch.rewards.to(device)
-        dones      = batch.dones.to(device)
-        return DictReplayBufferSamples(obs, actions, next_obs, dones, rewards)
-
-    # override -----------------------------------------------------------
-    def sample(self, batch_size: int, env=None, device=None):
-        batch = super().sample(batch_size, env=env)   # still on CPU
-
-        target_device = device or self.sample_device
-        if target_device is not None:
-            batch = self._to_device(batch, target_device)
-        return batch
 
 def show_conv3_maps(model, obs):
     conv3 = model.policy.q_net.features_extractor.cnn.cnn[4]  # 3rd Conv2d

@@ -9,7 +9,7 @@ import gpytorch
 
 import importlib
 import torch
-from stable_baselines3 import DQN
+#from stable_baselines3 import DQN
 
 import time
 import matplotlib.pyplot as plt
@@ -17,6 +17,8 @@ import seaborn as sns
 
 import rl_scenario_bank
 import rl_gas_survey_dubins_env
+import rl_DQN_PER
+from rl_DQN_PER import PERDQN
 import chem_utils
 import gpt_class_exactgpmodel
 import gpt_functions
@@ -57,13 +59,14 @@ env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100,
 
 buffer_size = 400_000                      # how many transitions
 
-replay_buffer = rl_gas_survey_dubins_env.CpuDictReplayBuffer(
+replay_buffer = rl_DQN_PER.PrioritizedCpuDictReplayBuffer(
     buffer_size       = buffer_size,
     observation_space = env.observation_space,
     action_space      = env.action_space,
     device            = "cpu",           # storage
     sample_device     = device,          # default target device
-    optimize_memory_usage = False
+    optimize_memory_usage = False,
+    alpha=0.6, beta0=0.4, beta_steps=1_000_000, eps=1e-6
 )
 
 # %%
@@ -89,7 +92,7 @@ if load:
     save_prefix = '1_'
     models_dir = f"{models_parent}/{load_time}"
 
-    agent = DQN.load(f"{models_dir}/{load_model}", env=env, device=env.device)
+    agent = PERDQN.load(f"{models_dir}/{load_model}", env=env, device=env.device)
     try:
         agent.load_replay_buffer(f"{models_dir}/buffer.pkl")
     except:
@@ -111,7 +114,7 @@ else:
         features_extractor_kwargs=dict(features_dim=512),
     )
 
-    agent = DQN(
+    agent = PERDQN(
         "MultiInputPolicy",
         env,                        # env returns {"map": ..., "loc": ...}
         device=env.device,
@@ -140,7 +143,7 @@ while a < 1:
         total_timesteps=TIMESTEPS,
         reset_num_timesteps=False,
         log_interval=log_interval,
-        tb_log_name=f'DQN'
+        tb_log_name=f'PERDQN'
         )
     #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
     agent.save(f"{models_dir}/{save_prefix}{env.total_steps}")
