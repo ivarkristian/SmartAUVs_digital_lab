@@ -1,12 +1,11 @@
 # %%
-import gpytorch.constraints
 from memory_profiler import profile
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 import socket
 import numpy as np
 import gpytorch
-
+import gpytorch.constraints
 import importlib
 import torch
 #from stable_baselines3 import DQN
