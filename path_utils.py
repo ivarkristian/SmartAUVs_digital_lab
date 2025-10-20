@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-def rotate_points(coordinates, angle_deg):
+def rotate_points(coordinates, angle_deg, rot_coord=None):
     """
     Rotates a set of 2D coordinates by a given angle in degrees.
 
@@ -12,7 +12,10 @@ def rotate_points(coordinates, angle_deg):
     Returns:
     - rotated_coords: numpy array or torch tensor of shape (n, 2), the rotated coordinates.
     """
-    import math  # For mathematical constants like pi
+    if rot_coord is None:
+        t = [coordinates[:, 0].mean(), coordinates[:, 1].mean()]
+    else:
+        t = rot_coord
 
     # Check if coordinates is a numpy array
     if isinstance(coordinates, np.ndarray):
@@ -44,10 +47,13 @@ def rotate_points(coordinates, angle_deg):
             [sin_angle,  cos_angle]
         ], dtype=coordinates.dtype, device=coordinates.device)
 
+        t = torch.tensor(t, device=coordinates.device)
+
     else:
         raise TypeError("coordinates must be a numpy array or a torch tensor")
     
     # Rotate the coordinates
-    rotated_coords = coordinates @ rotation_matrix.T
+    coords_zero_translated = coordinates - t
+    rotated_coords = coords_zero_translated @ rotation_matrix.T
 
-    return rotated_coords
+    return rotated_coords + t

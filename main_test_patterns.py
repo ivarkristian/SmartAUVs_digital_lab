@@ -1,3 +1,14 @@
+# The purpose of this script is to support paper 4 - investigating simulated patterns
+# and application in field study.
+
+# In particular, this script runs tests that compare different preplanned patterns
+# for focused sampling near points of interest. We plan to compare patterns that
+# a) does not take into account currents - double bowtie, dubins square, spiral
+# b) patterns that do take the current into account - tilted bowtie, drifting circle
+
+# The aim is to find a best practice for known and unknown current, and compare with
+# field measurements.
+
 # %%
 import importlib
 import torch
@@ -9,6 +20,7 @@ import path
 import chem_utils
 import rl_gas_survey_dubins_env
 import analysis_utils
+import path_utils
 from patterns import *
 
 # %%
@@ -16,6 +28,7 @@ importlib.reload(rl_scenario_bank)
 importlib.reload(path)
 importlib.reload(rl_gas_survey_dubins_env)
 importlib.reload(analysis_utils)
+importlib.reload(path_utils)
 
 # %%
 # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
@@ -121,62 +134,72 @@ waypoints_with_turns = lp.remove_consecutive_duplicate_wps(waypoints_with_turns,
 
 
 plain_sample_coords_times_list = path.path(waypoints_with_turns, start_time, speed, sample_freq, synoptic=True)
-sample_coords_xy = [(row[0], row[1]) for row in plain_sample_coords_times_list]
+sample_coords_xy = [row[:2] for row in plain_sample_coords_times_list]
 
 # %%
 for pattern_func in pattern_funcs:
     print(f'Pattern: {pattern_func.__name__}')
 
     # Simulate AUV path and collect data
-    measurements = np.zeros(len(sample_coords_xy), dtype=np.float32)
+    measurements = []
+    measurement_coords = []
     sample_coords_xy_pattern_coords = []
     triggered_locs = []
     triggered_patterns = []
 
-    new_trigger = False
-    c = 0
+    #new_trigger = False
+    #c = 0
     for coord in sample_coords_xy:
-        measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(env_xy_np[:, 0], env_xy_np[:, 1], values_np, coord, sample_radius)
-        c = c+1
+        msr = chem_utils.extract_synoptic_chemical_data_from_depth(env_xy_np[:, 0], env_xy_np[:, 1], values_np, coord, sample_radius)
+        measurements.append(msr)
+        measurement_coords.append(coord)
+        #c = c+1
 
         # Check if the chemical data exceeds the threshold and sample in a pattern if true
-        if measurements[c-1] > threshold:
+        if msr > threshold:
             # Check if leakage region is new
-            if len(triggered_locs) == 0:
-                new_trigger = True
-            else:
-                new_trigger = True # assume new trigger
-                for (loc_x, loc_y) in triggered_locs:
-                    dx = coord[0] - loc_x
-                    dy = coord[1] - loc_y
-                    if dx*dx + dy*dy <= trigger_dist*trigger_dist:
-                        new_trigger = False # remove trigger if too close
-                        break
-
+            new_trigger = True # assume new trigger
+            for (loc_x, loc_y) in triggered_locs:
+                dx = coord[0] - loc_x
+                dy = coord[1] - loc_y
+                if dx*dx + dy*dy <= trigger_dist*trigger_dist:
+                    new_trigger = False # remove trigger if too close
+                    break
             
             if new_trigger:
-                new_trigger = False
+                #new_trigger = False
                 triggered_locs.append(coord)
                 pattern_waypoints = pattern_func(np.array([coord[0], coord[1], depth]))
-
-                pattern_sample_coords_times_list = path.path(pattern_waypoints, start_time, speed, sample_freq, synoptic=True)
-                sample_coords_xy_pattern = [(row[0], row[1]) for row in pattern_sample_coords_times_list]
-                measurements = np.pad(measurements, (0, len(sample_coords_xy_pattern)), mode='constant', constant_values=0)
-
-                for pattern_coord in sample_coords_xy_pattern:
-                    measurements[c] = chem_utils.extract_synoptic_chemical_data_from_depth(env_xy_np[:, 0], env_xy_np[:, 1], values_np, pattern_coord, sample_radius)
-                    c = c+1
+                pattern_wp_xy = np.array([(row[0], row[1]) for row in pattern_waypoints])
                 
-                triggered_patterns.append(sample_coords_xy_pattern)
+                # rotate pattern accourding to heading
+                heading = np.atan2((coord[1] - coord_prev[1]),(coord[0] - coord_prev[0]))
+                pattern_wp_rotated = path_utils.rotate_points(pattern_wp_xy, np.rad2deg(heading), rot_coord=coord)
+                pattern_wp_xyz = np.array([(row[0], row[1], depth) for row in pattern_wp_rotated])
 
-    pattern_xy = [x for sublist in triggered_patterns for x in sublist]
-    sample_coords_xy_total = torch.tensor(sample_coords_xy + pattern_xy)
+                pattern_sample_coords_times_list = path.path(pattern_wp_xyz, start_time, speed, sample_freq, synoptic=True)
+                sample_coords_xy_pattern = [(row[0], row[1]) for row in pattern_sample_coords_times_list]
+                #measurements = np.pad(measurements, (0, len(sample_coords_xy_pattern)), mode='constant', constant_values=0)
+
+                #msrs_tmp = np.zeros(len(sample_coords_xy_pattern))
+                #msr_locs_tmp = np.zeros_like(msrs_tmp)
+                for i, pattern_coord in enumerate(sample_coords_xy_pattern):
+                    msr = chem_utils.extract_synoptic_chemical_data_from_depth(env_xy_np[:, 0], env_xy_np[:, 1], values_np, pattern_coord, sample_radius)
+                    measurements.append(msr)
+                    measurement_coords.append(pattern_coord)
+                
+                #triggered_patterns.append(sample_coords_xy_pattern)
+        
+        coord_prev = coord
+
+    #pattern_xy = [x for sublist in triggered_patterns for x in sublist]
+    #sample_coords_xy_total = torch.tensor(sample_coords_xy + pattern_xy)
     measurements = torch.tensor(measurements)
 
     
     # Plot the final path
     title = f"{pattern_func.__name__}, {random_scenario['parameter']} at -{random_scenario['depth']}m. ({random_scenario['cur_str']:.2}m/s @ {round(random_scenario['cur_dir'])} deg)"
-    analysis_utils.plot_env(x=env_xy[:, 0], y=env_xy[:, 1], c=values, path=sample_coords_xy_total, title=title)
+    analysis_utils.plot_env(x=env_xy[:, 0], y=env_xy[:, 1], c=values, path=np.array(measurement_coords), title=title)
 
 
 # %%
