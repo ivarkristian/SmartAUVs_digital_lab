@@ -94,6 +94,7 @@ for _ in range(n_actions):
 # %%
 env.plot_env(x=env.env_x_np, y=env.env_y_np, c=env.env_vals_np)
 
+# %%
 agents.compare_envs([ig_env, ucb_env, ducb_env], env_names=['IG', 'UCB', 'DUCB'], mean_attr="pred_mu_norm_clipped", path=True)
 
 # %%

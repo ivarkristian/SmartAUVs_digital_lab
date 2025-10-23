@@ -39,8 +39,8 @@ env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100,
 #load_model = '1754301775_cupid_0_950000' # DQN, 11000, dubins(25)
 #load_model = '1757516414_cupid_0_885000'
 #load_model = '1758560582_rudolph_0_3759974' # DQN, 11000, dubins(25), r_w=[3.0,1.0,1.0]
-load_model = '1760001506_dunder_0_5689993' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-
+#load_model = '1760001506_dunder_0_5689993' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 models_dir = f"models"
 
 #agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)
