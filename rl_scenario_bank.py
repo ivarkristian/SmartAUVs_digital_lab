@@ -274,6 +274,18 @@ class ScenarioBank:
         for i in range(len(self.environments)):
             torch.clamp_(self.environments[i]['values'], min, max)
 
+    def gas_coverage_cutoff(self, cutoff_concentration=0, cutoff_percentage=0):
+        # compute percentage above threshold for each environment
+        percentages = np.zeros(len(self.environments))
+        for i, env in enumerate(self.environments):
+            vals = np.asarray(env['values'])
+            pct = (vals > cutoff_concentration).sum() / len(vals) * 100
+            percentages[i] = pct
+
+        self.environments = [env for env, pct in zip(self.environments, percentages) if pct >= cutoff_percentage]
+        print(f'Removed environments where coverage of gas plume < {cutoff_percentage}')
+        print(f'(Gas plume defined as concentration >= {cutoff_concentration})')
+        print(f'{len(self.environments)} environments left')
 
     def create_obs_coords(self, resolution):
         

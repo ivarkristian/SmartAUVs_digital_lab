@@ -28,6 +28,7 @@ importlib.reload(rl_scenario_bank)
 importlib.reload(chem_utils)
 importlib.reload(gpt_functions)
 importlib.reload(gpt_class_exactgpmodel)
+importlib.reload(rl_DQN_PER)
 
 # %%
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
@@ -36,6 +37,7 @@ envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
+bank.gas_coverage_cutoff(cutoff_concentration=550, cutoff_percentage=6)
 
 # %%
 # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
@@ -121,8 +123,8 @@ else:
         batch_size=256,
         learning_rate=3e-4,
         learning_starts=256,
-        tau=0.005,
-        train_freq=4,
+        tau=0.0075,#0.005,
+        train_freq=1,#4,
         gradient_steps=1,
         policy_kwargs=policy_kwargs,
         verbose=1,

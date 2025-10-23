@@ -113,7 +113,7 @@ class PrioritizedCpuDictReplayBuffer(DictReplayBuffer):
             obs, next_obs = raw_batch.observations, raw_batch.next_observations
             actions, rewards, dones = raw_batch.actions, raw_batch.rewards, raw_batch.dones
 
-        return PERBatch(obs, actions, next_obs, dones, rewards, weights, indices), (probs.mean(), probs.std()), (probs[indices].mean, probs[indices].std())
+        return PERBatch(obs, actions, next_obs, dones, rewards, weights, indices), (probs.mean()/probs[indices].mean(), probs.std()/probs[indices].std())
 
     def update_priorities(self, indices: np.ndarray, new_priorities: np.ndarray):
         new_p = np.asarray(new_priorities, dtype=np.float32).reshape(-1)
@@ -131,7 +131,7 @@ class PERDQN(DQN):
 
         for _ in range(gradient_steps):
             # --- Sample with PER: returns weights + indices
-            replay_data, buf_stats, batch_stats = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+            replay_data, per_stats = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
 
             obs       = replay_data.observations
             next_obs  = replay_data.next_observations
@@ -178,8 +178,5 @@ class PERDQN(DQN):
         if len(losses) > 0:
             self.logger.record("train/loss", float(np.mean(losses)))
             self.logger.record("per/td_abs_mean_batch", float(td_errors.abs().mean().item()))
-            self.logger.record("per/buf_mean", float(buf_stats[0]))
-            self.logger.record("per/buf_std", float(buf_stats[1]))
-            self.logger.record("per/batch_mean", float(batch_stats[0]))
-            self.logger.record("per/batch_std", float(batch_stats[1]))
-            
+            self.logger.record("per/batch_mean_factor", float(per_stats[0]))
+            self.logger.record("per/batch_std_factor", float(per_stats[1]))
