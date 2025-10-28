@@ -283,7 +283,7 @@ class ScenarioBank:
             percentages[i] = pct
 
         self.environments = [env for env, pct in zip(self.environments, percentages) if pct >= cutoff_percentage]
-        print(f'Removed environments where coverage of gas plume < {cutoff_percentage}')
+        print(f'Removed environments where coverage of gas plume < {cutoff_percentage}%')
         print(f'(Gas plume defined as concentration >= {cutoff_concentration})')
         print(f'{len(self.environments)} environments left')
 

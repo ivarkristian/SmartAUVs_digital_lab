@@ -113,7 +113,7 @@ class PrioritizedCpuDictReplayBuffer(DictReplayBuffer):
             obs, next_obs = raw_batch.observations, raw_batch.next_observations
             actions, rewards, dones = raw_batch.actions, raw_batch.rewards, raw_batch.dones
 
-        return PERBatch(obs, actions, next_obs, dones, rewards, weights, indices), (probs.mean()/probs[indices].mean(), probs.std()/probs[indices].std())
+        return PERBatch(obs, actions, next_obs, dones, rewards, weights, indices), (probs[indices].mean()/probs.mean(), probs[indices].std()/probs.std())
 
     def update_priorities(self, indices: np.ndarray, new_priorities: np.ndarray):
         new_p = np.asarray(new_priorities, dtype=np.float32).reshape(-1)

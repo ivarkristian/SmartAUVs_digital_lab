@@ -114,6 +114,7 @@ else:
         features_extractor_class=rl_gas_survey_dubins_env.MapPlusLocExtractor,
         features_extractor_kwargs=dict(features_dim=512),
     )
+# Now running with these new settings on dunder and rudolph. Dunder has cut_percentage=6, cut_conc=550, rudolph has full environment setrease
 
     agent = PERDQN(
         "MultiInputPolicy",
@@ -123,8 +124,8 @@ else:
         batch_size=256,
         learning_rate=3e-4,
         learning_starts=256,
-        tau=0.0075,#0.005,
-        train_freq=1,#4,
+        tau=0.005,
+        train_freq=4,
         gradient_steps=1,
         policy_kwargs=policy_kwargs,
         verbose=1,
