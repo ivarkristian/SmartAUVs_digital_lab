@@ -303,6 +303,55 @@ class ScenarioBank:
         # Save as 2‑D field for coord‑channels and as flat list for GP queries
         coords = np.stack([gx, gy], axis=-1)      # (H, W, 2)
         self.coords_flat = torch.from_numpy(coords.reshape(-1, 2))
+    
+    def rotate_xy(env_xy: torch.Tensor, d: float | int) -> torch.Tensor:
+        """
+        Rotate 2-D coordinates `env_xy` by `d` degrees **clockwise**.
+
+        Returns
+        -------
+        rotated : (N, 2) torch.Tensor
+            Rotated coordinates, same dtype and device as `env_xy`.
+        """
+        t = torch.tensor([env_xy[:, 0].mean(), env_xy[:, 1].mean()], device=env_xy.device)
+        env_xy_zero_translated = env_xy - t
+        # ensure float dtype on the same device as the input
+        theta = torch.deg2rad(torch.as_tensor(d, dtype=env_xy.dtype,
+                                            device=env_xy.device))
+
+        c, s = torch.cos(theta), torch.sin(theta)
+        rot_mat = torch.stack((torch.stack(( c,  -s)),
+                            torch.stack((s,  c))))
+        
+        env_xy_rot = env_xy_zero_translated @ rot_mat.T
+
+        return env_xy_rot + t
+    
+    def offset_xy(self, env_xy, values, max_offset_factors):
+        # Offset so that source is not always in the middle
+        max_x_off = int(env_xy[:, 0].max()/2 * max_offset_factors[0])
+        max_y_off = int(env_xy[:, 1].max()/2 * max_offset_factors[1])
+        self.x_off = random.randint(-max_x_off, max_x_off)
+        self.y_off = random.randint(-max_y_off, max_y_off)
+        
+        x_max = env_xy[:, 0].max()
+        y_max = env_xy[:, 1].max()
+        x_min = env_xy[:, 0].min()
+        y_min = env_xy[:, 1].min()
+        
+        env_xy[:, 0] += self.x_off
+        env_xy[:, 1] += self.y_off
+        
+        values[env_xy[:, 0] > x_max] = values.min()
+        values[env_xy[:, 0] < x_min] = values.min()
+        values[env_xy[:, 1] > y_max] = values.min()
+        values[env_xy[:, 1] < y_min] = values.min()
+        env_xy[:, 0][env_xy[:, 0] > x_max] -= x_max
+        env_xy[:, 0][env_xy[:, 0] < x_min] += x_max
+        env_xy[:, 1][env_xy[:, 1] > y_max] -= y_max
+        env_xy[:, 1][env_xy[:, 1] < y_min] += y_max
+
+        return env_xy, values
 
 if __name__ == '__main__':
     # Initialize bank object

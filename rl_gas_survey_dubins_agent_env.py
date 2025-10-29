@@ -90,7 +90,7 @@ class GasSurveyDubinsAgentEnv(gym.Env):
         print(f'Init dubins env, \ndevice: {self.device}\nturn_radius: {self.turn_radius}\nchannels: {self.channels}')
 
     #@profile
-    def reset(self, seed=None, options=None):
+    def reset(self, seed=None, options=None, env_xy=None, values=None):
         
         if self.n_episodes % self.print_info_rate == 0 and self.n_episodes:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.print_info_rate):.3}')
@@ -102,38 +102,17 @@ class GasSurveyDubinsAgentEnv(gym.Env):
         self.n_steps = 0
         self.terminated = False
 
-        # Draw a random scenario/snapshot
-        self.rotation = random.choice([-90, 0, 90, 180])
-        random_scenario = self.scenario_bank.sample()
+        if env_xy == None:
+            # Draw a random scenario/snapshot
+            random_scenario = self.scenario_bank.sample()
+            self.rotation = random.choice([-90, 0, 90, 180])
 
-        env_xy = self._rotate_xy(random_scenario['coords'].to(self.device), self.rotation)
-        values = random_scenario['values'].to(self.device)
+            env_xy = self.scenario_bank.rotate_xy(random_scenario['coords'].to(self.device), self.rotation)
+            values = random_scenario['values'].to(self.device)
 
-        # Offset so that source is not always in the middle
-        max_x_off = int(env_xy[:, 0].max()/2 * 0.7)
-        max_y_off = int(env_xy[:, 1].max()/2 * 0.7)
-        self.x_off = random.randint(-max_x_off, max_x_off)
-        self.y_off = random.randint(-max_y_off, max_y_off)
-        
-        x_max = env_xy[:, 0].max()
-        y_max = env_xy[:, 1].max()
-        x_min = env_xy[:, 0].min()
-        y_min = env_xy[:, 1].min()
-        
-        env_xy[:, 0] += self.x_off
-        env_xy[:, 1] += self.y_off
-        
-        values[env_xy[:, 0] > x_max] = values.min()
-        values[env_xy[:, 0] < x_min] = values.min()
-        values[env_xy[:, 1] > y_max] = values.min()
-        values[env_xy[:, 1] < y_min] = values.min()
-        env_xy[:, 0][env_xy[:, 0] > x_max] -= x_max
-        env_xy[:, 0][env_xy[:, 0] < x_min] += x_max
-        env_xy[:, 1][env_xy[:, 1] > y_max] -= y_max
-        env_xy[:, 1][env_xy[:, 1] < y_min] += y_max
-
-        self.env_xy = env_xy
-        self.values = values
+            self.env_xy, self.values = self.scenario_bank.offset_xy(env_xy, values, self.max_offset_factors)
+        else:
+            self.env_xy, self.values = env_xy, values
 
         self.env_x_np = self.env_xy[:, 0].cpu().numpy()
         self.env_y_np = self.env_xy[:, 1].cpu().numpy()
