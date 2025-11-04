@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import time
 from typing import Tuple, Union, Sequence
 from scipy.ndimage import shift      # comes with SciPy
+from scipy.spatial import cKDTree
 
 import dubins
 from gpt_class_exactgpmodel import ExactGPModel
@@ -211,7 +212,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
 
         # Init prediction tensors
-        self.pred_mu = np.zeros((self.obs_y, self.obs_x), dtype=np.float32)
+        self.pred_mu = np.zeros((self.obs_y, self.obs_x), dtype=np.float32) + self.mu_all
         self.pred_var = np.full_like(self.pred_mu, self.sigma2_all)
         
         if self.debug:
@@ -312,7 +313,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.sample_idx = end_idx
 
         t = time.process_time()
-        self._estimate() # fill self.pred_mu, self.pred_var and norms
+        self._estimate_local() # fill self.pred_mu, self.pred_var and norms
         if self.timer:
             print(f't3 step: {time.process_time()-t}')
         
@@ -320,7 +321,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.loc = self.new_loc.detach()
         self.heading = new_heading
 
-        self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
+        #self.make_circle(self.loc[0].cpu().numpy(), self.loc[1].cpu().numpy(), self.location_radius)
         
         obs, truncated, info = self._get_obs_truncated_info()
         
@@ -632,7 +633,178 @@ class GasSurveyDubinsEnv(gym.Env):
         assert all(str(p.device.type) == str(self.device) for p in self.llh.parameters()), \
             "Likelihood parameters not on target device"
 
+    def debug_local_gp_update(self, idx_local, show=True, save_path=None):
+        """
+        Plot a diagnostic figure showing:
+        - All samples so far (gray)
+        - The most recent samples used for the GP update (red)
+        - The area (points) recomputed by the local GP update (light blue)
+
+        Parameters
+        ----------
+        idx_local : torch.Tensor or np.ndarray
+            Indices of self._coords_flat that were recomputed.
+        show : bool
+            Whether to display the plot interactively.
+        save_path : str or None
+            If given, save the figure to this path.
+        """
+
+        # --- Prepare coordinate arrays ---
+        coords = self._coords_flat.detach().cpu().numpy()
+        if isinstance(idx_local, torch.Tensor):
+            idx_local = idx_local.detach().cpu().numpy().astype(np.int64)
+
+        # Local update region
+        coords_local = coords[idx_local]
+
+        # All sample coordinates (past and current)
+        all_samples = self.sampled_coords[:self.sample_idx]
+        if isinstance(all_samples, torch.Tensor):
+            all_samples = all_samples.detach().cpu().numpy()
+
+        # Most recent samples (used in GP update)
+        recent_samples = self.sampled_coords[self.sample_idx_mdl:self.sample_idx]
+        if isinstance(recent_samples, torch.Tensor):
+            recent_samples = recent_samples.detach().cpu().numpy()
+
+        # --- Create figure ---
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.set_aspect('equal', adjustable='box')
+
+        # Show local-update region (light blue)
+        ax.scatter(coords_local[:, 0], coords_local[:, 1], s=8, color='lightskyblue', alpha=0.4, label='Recomputed area')
+
+        # Show all previous samples (gray)
+        if len(all_samples) > 0:
+            ax.scatter(all_samples[:, 0], all_samples[:, 1], s=10, color='gray', alpha=0.5, label='All samples')
+
+        # Show most recent samples (red, on top)
+        if len(recent_samples) > 0:
+            ax.scatter(recent_samples[:, 0], recent_samples[:, 1], s=30, color='red', edgecolor='k', label='Recent samples')
+
+        # --- Styling ---
+        ax.set_xlabel("X position")
+        ax.set_ylabel("Y position")
+        ax.set_title("Local GP Update Debug View")
+        ax.legend(loc='best')
+        ax.grid(True, linestyle=':', alpha=0.4)
+
+        # --- Save or show ---
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        if show:
+            plt.show()
+        plt.close(fig)
+    
+    def debug_gp_update_values(self, new_pred, show=True, save_path=None):
+        """
+        Visualize how self.pred_mu changes after a local update.
+        
+        Shows:
+        - self.pred_mu (current, after update)
+        - self.pred_mu values before update (if provided)
+        - difference (delta) map
+        - scatter markers for updated cells (rows, cols)
+        """
+
+        # --- 2. Difference map ---
+        delta = new_pred - self.pred_mu
+
+        # --- 3. Plot setup ---
+        fig, axs = plt.subplots(1, 3, figsize=(14, 4))
+        extent = [0, self.env_x_max, 0, self.env_y_max]
+
+        im0 = axs[0].imshow(self.pred_mu, origin='lower', cmap='viridis', extent=extent)
+        axs[0].set_title("pred_mu BEFORE update")
+        fig.colorbar(im0, ax=axs[0], fraction=0.046)
+
+        im1 = axs[1].imshow(new_pred, origin='lower', cmap='viridis', extent=extent)
+        axs[1].set_title("pred_mu AFTER update")
+        axs[1].legend(loc='lower right', fontsize=8)
+        fig.colorbar(im1, ax=axs[1], fraction=0.046)
+
+        im2 = axs[2].imshow(delta, origin='lower', cmap='coolwarm', extent=extent)
+        axs[2].set_title("Difference (After - Before)")
+        fig.colorbar(im2, ax=axs[2], fraction=0.046)
+
+        for ax in axs:
+            ax.set_xlabel("X")
+            ax.set_ylabel("Y")
+            ax.grid(True, linestyle=":", alpha=0.3)
+
+        plt.tight_layout()
+
+        # --- 4. Save or show ---
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        if show:
+            plt.show()
+        plt.close(fig)
+
     #@profile
+    def _estimate_local(self):
+        if self.mdl is None:
+            if self.debug:
+                print(f'Created model in ._estimate()')
+            self.mdl = ExactGPModel(self.sampled_coords, self.sampled_vals-self.mu_all, self.llh, self.kernel_type, lengthscale_constraint=self.ls_const).to(self.device)
+        
+        t = time.process_time()
+        #self.mdl.set_train_data(
+        #    inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
+        if len(self.mdl.train_targets) > 0:
+            # not first prediction, use fantasy mdl
+            self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all).to(self.device)
+        else:
+            # first prediction must have train data
+            self.mdl.set_train_data(
+                inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
+            
+            if self.debug:
+                self.mdl.print_named_parameters()
+            
+        if self.timer:
+            print(f't3.1 step: {time.process_time()-t}')
+
+        if not hasattr(self, "current_pred"):
+            with torch.no_grad(), gpytorch.settings.fast_pred_var():
+                current_pred = self.mdl(self._coords_flat)
+                self.current_pred_mean = current_pred.mean + self.mu_all
+                self.current_pred_variance = current_pred.variance
+
+        
+        # Then predict local coords around acquired samples
+        t = time.process_time()
+        lengthscale = float(self.mdl.covar_module.base_kernel.lengthscale.squeeze().cpu())
+        self.idx_local = self._get_local_update_indices(corr_length=lengthscale)
+        coords_local = self._coords_flat[self.idx_local]
+        
+        if len(coords_local) > 0:
+            with torch.no_grad(), gpytorch.settings.fast_pred_var():
+                local_pred = self.mdl(coords_local)
+        
+            self.current_pred_mean[self.idx_local] = local_pred.mean + self.mu_all
+            self.current_pred_variance[self.idx_local] = local_pred.variance
+            
+            #self.debug_local_gp_update(self.idx_local)
+            #self.debug_gp_update_values(self._tensor_to_obs_channel(self.current_pred_mean))
+            
+            self.pred_mu = self._tensor_to_obs_channel(self.current_pred_mean)
+            self.pred_var = self._tensor_to_obs_channel(self.current_pred_variance)
+            
+        self.sample_idx_mdl = self.sample_idx
+
+        if self.timer:
+            print(f't3.2 step: {time.process_time()-t} - len(coords_local: {len(coords_local)})')
+        
+        # Scale to 0-255 ([min_conc, max_conc] from scenario bank)
+        t = time.process_time()
+        self.pred_mu_norm = (self.pred_mu - self.min_concentration) / (self.max_concentration - self.min_concentration) * 255
+        self.pred_var_norm = self.pred_var/self.sigma2_all * 255
+        self._normalize_pred_layers()
+
+        return
+    
     def _estimate(self):
         if self.mdl is None:
             if self.debug:
@@ -660,10 +832,7 @@ class GasSurveyDubinsEnv(gym.Env):
         # Then predict
         t = time.process_time()
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            #if use_self_mdl:
             current_pred = self.mdl(self._coords_flat)
-            #else:
-            #    current_pred = mdl_fantasy(self._coords_flat)
 
         if self.timer:
             print(f't3.2 step: {time.process_time()-t}')
@@ -680,10 +849,44 @@ class GasSurveyDubinsEnv(gym.Env):
         self.pred_var_norm = self.pred_var/self.sigma2_all * 255
         self._normalize_pred_layers()
 
-        if self.timer:
-            print(f't3.4 step: {time.process_time()-t}')
-
         return
+
+    def _get_local_update_indices(self, corr_length, scale=3.0):
+        """
+        Return indices of coords in self._coords_flat that lie within
+        (scale * corr_length) of any recently sampled coordinate.
+        
+        Parameters
+        ----------
+        corr_length : float
+            The GP kernel correlation length (in same units as self._coords_flat).
+        scale : float
+            Multiplier defining the radius of influence (~3 is typical).
+        """
+        # --- 1. Extract recent sample coordinates (convert to CPU numpy) ---
+        new_samples = self.sampled_coords[self.sample_idx_mdl:self.sample_idx]
+        
+        if isinstance(new_samples, torch.Tensor):
+            new_samples = new_samples.detach().cpu().numpy()
+        elif isinstance(new_samples, list):
+            new_samples = np.array(new_samples)
+
+        # --- 2. Build KD-tree on all grid coordinates (cached between calls if possible) ---
+        if not hasattr(self, "_coord_tree"):
+            coords_np = self._coords_flat.detach().cpu().numpy()
+            self._coord_tree = cKDTree(coords_np)
+
+        # --- 3. Query nearby coordinates ---
+        update_radius = scale * corr_length
+        neighbor_indices = []
+        for pt in new_samples:
+            neighbor_indices.extend(self._coord_tree.query_ball_point(pt, r=update_radius))
+
+        # --- 4. Deduplicate and return as tensor indices ---
+        idx_unique = np.unique(neighbor_indices)
+        
+        idx_tensor = torch.as_tensor(idx_unique, dtype=torch.long, device=self.device)
+        return idx_tensor
 
     def _norm_minmax(self):
         return (self.values - self.min_concentration)/(self.max_concentration - self.min_concentration)

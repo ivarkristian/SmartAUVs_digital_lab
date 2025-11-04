@@ -304,7 +304,7 @@ class ScenarioBank:
         coords = np.stack([gx, gy], axis=-1)      # (H, W, 2)
         self.coords_flat = torch.from_numpy(coords.reshape(-1, 2))
     
-    def rotate_xy(env_xy: torch.Tensor, d: float | int) -> torch.Tensor:
+    def rotate_xy(self, env_xy: torch.Tensor, d: float | int) -> torch.Tensor:
         """
         Rotate 2-D coordinates `env_xy` by `d` degrees **clockwise**.
 

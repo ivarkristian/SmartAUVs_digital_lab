@@ -146,6 +146,9 @@ while ducb_env.sample_idx < n_samples_lim:
 ducb_env.sample_idx = n_samples_lim
 ducb_env._estimate()
 
+measurements_adaptive = ducb_env.values[:n_samples_lim]
+measurements_coords_adaptive = ducb_env.sampled_coords[:n_samples_lim]
+
 ducb_env.plot_env(x=ducb_env.sampled_coords[:, 0][:n_samples_lim], y=ducb_env.sampled_coords[:, 1][:n_samples_lim], c=ducb_env.sampled_vals[:n_samples_lim])
 
 # %%
@@ -176,3 +179,6 @@ for i in range(len(measurement_coords_lawnmower)):
     done = terminated or truncated
 
 q_values = np.vstack(q_values)
+
+measurements_rl = env.sampled_vals[:env.sample_idx]
+measurements_coords_rl = env.sampled_coords[:env.sample_idx]
