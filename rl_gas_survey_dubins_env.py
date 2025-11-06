@@ -239,8 +239,16 @@ class GasSurveyDubinsEnv(gym.Env):
         old_pred_mu = self.pred_mu
 
         if self.debug:
-            print(f'step: {self.n_steps} action: {action}')
+            print(f'step: {self.n_steps} Q-action: {action}')
         # expects action to be left, forward, right
+
+        # this is where we implement Thompson-like sampling and receding horizon planning
+        # - compute sampling coordinates for all three actions (we have all necessary functions for this)
+        # - sample all three actions from gpytorch posterior self.current_pred
+        # - for each action, compute new posterior based on the new samples
+        # - repeat above three lines for n planning depths (this is the part you must design, perhaps using a recurring function for maximum efficiency?)
+        # - find the action that leads to max total reward
+
         n_headings = len(self.heading)
         delta_xy, new_heading = move_with_heading(
             heading_1hot=self.heading, action=action, turn_radius=self.turn_radius,
@@ -772,7 +780,6 @@ class GasSurveyDubinsEnv(gym.Env):
                 self.current_pred_mean = current_pred.mean + self.mu_all
                 self.current_pred_variance = current_pred.variance
 
-        
         # Then predict local coords around acquired samples
         t = time.process_time()
         lengthscale = float(self.mdl.covar_module.base_kernel.lengthscale.squeeze().cpu())
