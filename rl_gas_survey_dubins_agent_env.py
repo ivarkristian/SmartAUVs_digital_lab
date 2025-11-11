@@ -110,7 +110,7 @@ class GasSurveyDubinsAgentEnv(gym.Env):
             env_xy = self.scenario_bank.rotate_xy(random_scenario['coords'].to(self.device), self.rotation)
             values = random_scenario['values'].to(self.device)
 
-            self.env_xy, self.values = self.scenario_bank.offset_xy(env_xy, values, self.max_offset_factors)
+            self.env_xy, self.values = self.scenario_bank.offset_xy(env_xy, values, (0.7, 0.7))
         else:
             self.env_xy, self.values = env_xy, values
 

@@ -9,6 +9,7 @@ import random
 import torch
 import numpy as np
 from stable_baselines3 import DQN
+import matplotlib.pyplot as plt
 
 import rl_scenario_bank
 import lawnmower_path as lp
@@ -17,6 +18,16 @@ import path
 import rl_gas_survey_dubins_agent_env
 import rl_gas_survey_dubins_env
 import agents
+
+# Use MathText for LaTeX-like font rendering
+plt.rcParams.update({
+    "text.usetex": False,  # Disable external LaTeX usage
+    "font.family": "Dejavu Serif",  # Use a serif font that resembles LaTeX's default
+    "mathtext.fontset": "dejavuserif"  # Use DejaVu Serif font for mathtext, similar to LaTeX fonts
+})
+
+# %%
+importlib.reload(rl_gas_survey_dubins_agent_env)
 
 # %%
 # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
@@ -36,6 +47,7 @@ turn_radius = 25
 gp_pred_resolution = [100, 100]
 
 # %%
+# Setup scenario bank
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
 envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
@@ -59,7 +71,9 @@ env_xy_np = env_xy.cpu().numpy()
 env_vals_np = values.cpu().numpy()
 
 # %%
-# Lawnmower sampling (without knowing the flow direction)
+# Setup lawnmower pattern, DUCB agent and RL agent
+
+# Setup lawnmower sampling (without knowing the flow direction)
 # Example simulation parameters
 sample_radius = 2.0
 line_spacing = 25
@@ -96,9 +110,27 @@ waypoints_with_turns, x_coords, y_coords, z_coords = lp.generate_lawnmower_waypo
 # remove duplicate waypoints
 waypoints_with_turns = lp.remove_consecutive_duplicate_wps(waypoints_with_turns, 1e-3)
 
-
 plain_sample_coords_times_list = path.path(waypoints_with_turns, start_time, speed, sample_freq, synoptic=True)
 sample_coords_xy = [row[:2] for row in plain_sample_coords_times_list]
+
+# Setup adaptive sampling agent
+adaptive_channels = np.array([1, 1, 0, 1, 1])
+kappa = 255/20.0
+gamma = -1.0
+n_samples_lim = len(sample_coords_xy)
+
+# init agent env class
+env_ducb = rl_gas_survey_dubins_agent_env.GasSurveyDubinsAgentEnv(bank, gp_pred_resolution=gp_pred_resolution, r_weights=[1.0, 1.0, 1.0], turn_radius=turn_radius, channels=adaptive_channels, timer=False, debug=False)
+
+# Setup RL agent
+env_device = torch.device("cpu")
+action_mode = ['relative', 20, 20]
+channels_rl = np.array([1, 1, 0, 0, 0])
+env_rl = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[5.0, 1.0, 1.0], channels=channels_rl, turn_radius = turn_radius, timer=False, debug=True, device=env_device)
+
+load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+models_dir = f"models"
+agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
 
 # %%
 # Start loop here
@@ -115,6 +147,7 @@ env_xy, values = bank.offset_xy(env_xy, values, max_offset_factors)
 env_xy_np = env_xy.cpu().numpy()
 env_vals_np = values.cpu().numpy()
 
+# Lawnmower sampling
 measurements_lawnmower = []
 measurement_coords_lawnmower = []
 for coord in sample_coords_xy:
@@ -124,61 +157,42 @@ for coord in sample_coords_xy:
 
 # Do a GP estimate here!
 
-# %%
-# Adaptive sampling agent
-adaptive_channels = np.array([1, 1, 0, 1, 1])
-kappa = 255/20.0
-gamma = -1.0
-n_samples_lim = len(measurements_lawnmower)
-
-# init agent env class
-ducb_env = rl_gas_survey_dubins_agent_env.GasSurveyDubinsAgentEnv(bank, gp_pred_resolution=gp_pred_resolution, r_weights=[1.0, 1.0, 1.0], turn_radius=turn_radius, channels=adaptive_channels, timer=False, debug=False)
-
-# set env to env_xy
-obs = ducb_env.reset(env_xy=env_xy, values=values)
+# DUCB sampling
+obs = env_ducb.reset(env_xy=env_xy, values=values)
 ducb_ag = agents.adaptive_agents(model_type='DUCB', obs=obs, kappa=kappa, gamma=gamma, debug=False)
 
 ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
-while ducb_env.sample_idx < n_samples_lim:
-    ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(ducb_env.step(waypoints=ducb_wps, heading=ducb_hdg))
-    #agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_env.pred_mu, ducb_env.pred_mu_norm_clipped], titles=["pred_mu", "pred_mu_norm_clipped"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
-    #agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_ag.gas_scaled, ducb_ag.map], titles=["gas_scaled", "ducb map"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
-ducb_env.sample_idx = n_samples_lim
-ducb_env._estimate()
+while env_ducb.sample_idx < n_samples_lim:
+    ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(env_ducb.step(waypoints=ducb_wps, heading=ducb_hdg))
 
-measurements_adaptive = ducb_env.values[:n_samples_lim]
-measurements_coords_adaptive = ducb_env.sampled_coords[:n_samples_lim]
+env_ducb.sample_idx = n_samples_lim
+env_ducb._estimate()
 
-ducb_env.plot_env(x=ducb_env.sampled_coords[:, 0][:n_samples_lim], y=ducb_env.sampled_coords[:, 1][:n_samples_lim], c=ducb_env.sampled_vals[:n_samples_lim])
+measurements_adaptive = env_ducb.values[:n_samples_lim]
+measurement_coords_adaptive = env_ducb.sampled_coords[:n_samples_lim]
 
-# %%
-# RL agent
-env_device = torch.device("cpu")
-action_mode = ['relative', 20, 20]
-channels_rl = np.array([1, 1, 0, 0, 0])
-env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[5.0, 1.0, 1.0], channels=channels_rl, turn_radius = turn_radius, timer=False, debug=True, device=env_device)
-
-load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-models_dir = f"models"
-agent = DQN.load(f"{models_dir}/{load_model}", env=env, device=env.device)
-
-# Run an episode
-obs, _ = env.reset(env_xy=env_xy, values=values)
+# RL agent sampling
+obs, _ = env_rl.reset(env_xy=env_xy, values=values)
 done = False
 rewards = np.array([])
 q_values = []
 for i in range(len(measurement_coords_lawnmower)):
-    if env.debug:
-        #q_vec = rl_gas_survey_discrete_env.get_q_values(agent, obs)
+    if env_rl.debug:
         q_vec = rl_gas_survey_dubins_env.get_q_values(agent, obs)
         q_values.append(q_vec)
 
     action, _step = agent.predict(obs, deterministic=True)
-    obs, reward, terminated, truncated, info = env.step(int(action))
+    obs, reward, terminated, truncated, info = env_rl.step(int(action))
     rewards = np.append(rewards, reward)
     done = terminated or truncated
 
 q_values = np.vstack(q_values)
 
-measurements_rl = env.sampled_vals[:env.sample_idx]
-measurements_coords_rl = env.sampled_coords[:env.sample_idx]
+measurements_rl = env_rl.sampled_vals[:env_rl.sample_idx]
+measurement_coords_rl = env_rl.sampled_coords[:env_rl.sample_idx]
+
+# %%
+# Plotting
+env_rl.plot_env(x=env_xy[:, 0], y=env_xy[:, 1], c=values) # original env
+#env_rl.plot_env(x=measurement_coords_lawnmower[])
+env_ducb.plot_env(x=env_ducb.sampled_coords[:, 0][:n_samples_lim], y=env_ducb.sampled_coords[:, 1][:n_samples_lim], c=env_ducb.sampled_vals[:n_samples_lim])

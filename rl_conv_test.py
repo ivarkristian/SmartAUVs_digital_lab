@@ -23,6 +23,7 @@ envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
+bank.gas_coverage_cutoff(cutoff_concentration=550, cutoff_percentage=6)
 
 # %%
 env_device = torch.device("cpu")
@@ -40,7 +41,8 @@ env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100,
 #load_model = '1757516414_cupid_0_885000'
 #load_model = '1758560582_rudolph_0_3759974' # DQN, 11000, dubins(25), r_w=[3.0,1.0,1.0]
 #load_model = '1760001506_dunder_0_5689993' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+#load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+load_model = '1761655432_dunder_0_10329902.zip' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 models_dir = f"models"
 
 #agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)

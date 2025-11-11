@@ -564,32 +564,32 @@ class GasSurveyDubinsEnv(gym.Env):
             case 'ne':
                 cx = self.env_x_max - self.turn_radius
                 cy = self.env_y_max - self.turn_radius
-                return (new_loc[0] > self.env_x_max - self.turn_radius/2 or
-                    new_loc[1] > self.env_y_max - self.turn_radius/2 or
+                return (new_loc[0] > self.env_x_max - self.turn_radius/3 or
+                    new_loc[1] > self.env_y_max - self.turn_radius/3 or
                     (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
             case 'north':
                 return new_loc[1] > self.env_y_max - self.turn_radius
             case 'nw':
                 cx = self.turn_radius
                 cy = self.env_y_max - self.turn_radius
-                return (new_loc[0] < self.turn_radius/2 or
-                    new_loc[1] > self.env_y_max - self.turn_radius/2 or
+                return (new_loc[0] < self.turn_radius/3 or
+                    new_loc[1] > self.env_y_max - self.turn_radius/3 or
                     (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
             case 'west':
                 return new_loc[0] < self.turn_radius
             case 'sw':
                 cx = self.turn_radius
                 cy = self.turn_radius
-                return (new_loc[0] < self.turn_radius/2 or
-                    new_loc[1] < self.turn_radius/2 or
+                return (new_loc[0] < self.turn_radius/3 or
+                    new_loc[1] < self.turn_radius/3 or
                     (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
             case 'south':
                 return new_loc[1] < self.turn_radius
             case 'se':
                 cx = self.env_x_max - self.turn_radius
                 cy = self.turn_radius
-                return (new_loc[0] > self.env_x_max - self.turn_radius/2 or
-                    new_loc[1] < self.turn_radius/2 or
+                return (new_loc[0] > self.env_x_max - self.turn_radius/3 or
+                    new_loc[1] < self.turn_radius/3 or
                     (new_loc[0] - cx)**2 + (new_loc[1] - cy)**2 < self.turn_radius**2)
 
         return False
