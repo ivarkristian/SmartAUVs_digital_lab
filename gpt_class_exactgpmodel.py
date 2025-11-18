@@ -40,7 +40,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
             self.covar_module = gpytorch.kernels.MaternKernel(nu=0.5, lengthscale_constraint=lengthscale_constraint)
         elif type == 'matern_ard':
             self.mean_module = gpytorch.means.ConstantMean()
-            self.covar_module = gpytorch.kernels.MaternKernel(nu=0.5, ard_num_dims=2, lengthscale_constraint=lengthscale_constraint)
+            self.covar_module = gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=2, lengthscale_constraint=lengthscale_constraint)
         elif type == 'SMK':
             self.mean_module = gpytorch.means.ConstantMean()
             self.covar_module = gpytorch.kernels.SpectralMixtureKernel(num_mixtures=8, ard_num_dims=2)

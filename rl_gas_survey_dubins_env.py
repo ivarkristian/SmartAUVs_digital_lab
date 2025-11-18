@@ -90,7 +90,7 @@ class GasSurveyDubinsEnv(gym.Env):
         print(f'Init dubins env, \ndevice: {self.device}\nturn_radius: {self.turn_radius}\nchannels: {self.channels}')
 
     #@profile
-    def reset(self, seed=None, options=None, env_xy=None, values=None):
+    def reset(self, seed=None, options=None, random_scenario=None, env_xy=None, values=None):
         
         if self.n_episodes % self.print_info_rate == 0 and self.n_episodes:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.print_info_rate):.3}')
@@ -102,17 +102,19 @@ class GasSurveyDubinsEnv(gym.Env):
         self.n_steps = 0
         self.terminated = False
 
-        if env_xy == None:
+        if random_scenario == None:
             # Draw a random scenario/snapshot
             random_scenario = self.scenario_bank.sample()
             self.rotation = random.choice([-90, 0, 90, 180])
 
             env_xy = self.scenario_bank.rotate_xy(random_scenario['coords'].to(self.device), self.rotation)
             values = random_scenario['values'].to(self.device)
+            self.cur_dir = random_scenario['cur_dir'] + self.rotation
 
             self.env_xy, self.values = self.scenario_bank.offset_xy(env_xy, values, self.max_offset_factors)
         else:
             self.env_xy, self.values = env_xy, values
+            self.cur_dir = random_scenario['cur_dir']
 
         self.env_x_np = self.env_xy[:, 0].cpu().numpy()
         self.env_y_np = self.env_xy[:, 1].cpu().numpy()
@@ -121,7 +123,7 @@ class GasSurveyDubinsEnv(gym.Env):
         self.parameter = random_scenario['parameter']
         self.depth = random_scenario['depth']
         self.time = random_scenario['time']
-        self.cur_dir = random_scenario['cur_dir'] + self.rotation
+        
         self.cur_str = random_scenario['cur_str']
 
         if self.debug:
@@ -191,10 +193,10 @@ class GasSurveyDubinsEnv(gym.Env):
         
         # Init location and heading. Should be random, but for Dubins paths
         # we ensure that location is not too close to area boundaries
-        rng_x = self.env_x_max - self.turn_radius*2
-        rng_y = self.env_y_max - self.turn_radius*2
-        loc_x = rng_x * random.random() + self.turn_radius
-        loc_y = rng_y * random.random() + self.turn_radius
+        rng_x = self.env_x_max - self.turn_radius*3
+        rng_y = self.env_y_max - self.turn_radius*3
+        loc_x = rng_x * random.random() + self.turn_radius*1.5
+        loc_y = rng_y * random.random() + self.turn_radius*1.5
         #loc_x = (self.env_x_max-1) * random.random()
         #loc_y = (self.env_y_max-1) * random.random()
         #self.heading = np.zeros(4)
