@@ -4,6 +4,8 @@ import gpytorch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib.gridspec as gridspec
 
 class RotatedMaternARD(gpytorch.kernels.Kernel):
     """
@@ -188,7 +190,7 @@ def init_strategy_results(strategy_names):
     }
 
 @torch.no_grad()
-def evaluate_strategies_for_field_lognorm(
+def evaluate_strategies_for_field_lognorm_gridspec(
     base_model, likelihood,
     Xtest, ytrue,
     strategy_samples,
@@ -266,87 +268,86 @@ def evaluate_strategies_for_field_lognorm(
         order = ["Lawnmower", "DUCB", "RL"]
         Z_preds = {name: preds_mu[name].reshape(obs_y, obs_x) for name in order}
 
-        fig, axes = plt.subplots(2, 2, figsize=(12, 9), dpi=300)
-        ax1, ax2, ax3, ax4 = axes.ravel()
+        fig = plt.figure(figsize=(12, 9), dpi=300)
+
+        # GridSpec: 2 rows, 2 columns, plus margin on right for colorbar
+        gs = gridspec.GridSpec(
+            2, 2,
+            figure=fig,
+            wspace=-0.28,   # horizontal spacing between plots
+            hspace=0.25,   # vertical spacing between plots
+            left=0.05,
+            right=0.92,    # leave space for colorbar
+            bottom=0.07,
+            top=0.90
+        )
+
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax2 = fig.add_subplot(gs[0, 1])
+        ax3 = fig.add_subplot(gs[1, 0])
+        ax4 = fig.add_subplot(gs[1, 1])
+
         for ax in (ax1, ax2, ax3, ax4):
-            ax.grid(False)  # disable major gridlines
+            ax.grid(False)
+            ax.set_aspect("equal", adjustable="box")
+            ax.tick_params(axis='both', labelsize=12)
         
         bg = 550.0   # your background concentration (or median/mean)
-        eps = 1e-3   # small offset to avoid log(0)
-
-        # Shift field so that bg → ≈0, then clip
-        excess = np.clip(Z_true - bg + eps, eps, None)
+        eps = 1e-2   # small offset to avoid log(0)
 
         vmin = eps
-        vmax = np.max(excess)
+        vmax = 2000-bg+eps #np.max(excess)
 
-        # 1) True field
-        #im1 = ax1.pcolormesh(X, Y, Z_true, cmap="viridis", shading="auto")
+        norm = LogNorm(vmin=vmin, vmax=vmax)
+        cmap = "viridis"
+        interp = 'bicubic'
+
+        # --- 1) TRUE FIELD ---
+        # Shift field so that bg → ≈0, then clip
+        excess_true = np.clip(Z_true - bg + eps, eps, None)
         im1 = ax1.imshow(
-            excess,
+            excess_true,
             origin="lower",
             extent=[X.min(), X.max(), Y.min(), Y.max()],
-            cmap="viridis",
-            norm=LogNorm(vmin=vmin, vmax=vmax),
-            interpolation="bicubic"  # <-- makes the image smooth
+            cmap=cmap,
+            norm=norm,
+            interpolation=interp
         )
+        ax1.set_title("GP prediction - True field", fontsize=14)
+        ax1.set_aspect("equal"); ax1.set_xlabel("East [m]"); ax1.set_ylabel("North [m]")
 
-        ax1.set_title("True field")
-        ax1.set_aspect("equal", adjustable="box")
-        ax1.set_xlabel("x"); ax1.set_ylabel("y")
-        cbar1 = fig.colorbar(im1, ax=ax1)
-        cbar1.set_label("Value")
+        # --- 2) LAWN ---
+        ex2 = np.clip(Z_preds['Lawnmower'] - bg + eps, eps, None)
+        im2 = ax2.imshow(ex2, origin="lower", extent=[X.min(), X.max(), Y.min(), Y.max()],
+                        cmap=cmap, norm=norm, interpolation=interp)
+        ax2.set_title("GP prediction - lawnmower", fontsize=14)
+        ax2.set_aspect("equal"); ax2.set_xlabel("East [m]"); ax2.set_ylabel("North [m]")
 
-        # 2) Lawnmower GP prediction
-        Z_lawn = Z_preds["Lawnmower"]
-        #im2 = ax2.pcolormesh(X, Y, Z_lawn, cmap="viridis", shading="auto")
-        im2 = ax2.imshow(
-            Z_lawn,
-            origin="lower",
-            extent=[X.min(), X.max(), Y.min(), Y.max()],
-            cmap="viridis",
-            interpolation="bicubic"  # <-- makes the image smooth
-        )
-        ax2.set_title("GP prediction – Lawnmower")
-        ax2.set_aspect("equal", adjustable="box")
-        ax2.set_xlabel("x"); ax2.set_ylabel("y")
-        cbar2 = fig.colorbar(im2, ax=ax2)
-        cbar2.set_label("Predicted value")
+        # --- 3) DUCB ---
+        ex3 = np.clip(Z_preds["DUCB"] - bg + eps, eps, None)
+        im3 = ax3.imshow(ex3, origin="lower", extent=[X.min(), X.max(), Y.min(), Y.max()],
+                        cmap=cmap, norm=norm, interpolation=interp)
+        ax3.set_title("GP prediction - DUCB", fontsize=14)
+        ax3.set_aspect("equal"); ax3.set_xlabel("East [m]"); ax3.set_ylabel("North [m]")
 
-        # 3) DUCB GP prediction
-        Z_ducb = Z_preds["DUCB"]
-        #im3 = ax3.pcolormesh(X, Y, Z_ducb, cmap="viridis", shading="auto")
-        im3 = ax3.imshow(
-            Z_ducb,
-            origin="lower",
-            extent=[X.min(), X.max(), Y.min(), Y.max()],
-            cmap="viridis",
-            interpolation="bicubic"  # <-- makes the image smooth
-        )
-        ax3.set_title("GP prediction – DUCB")
-        ax3.set_aspect("equal", adjustable="box")
-        ax3.set_xlabel("x"); ax3.set_ylabel("y")
-        cbar3 = fig.colorbar(im3, ax=ax3)
-        cbar3.set_label("Predicted value")
+        # --- 4) RL ---
+        ex4 = np.clip(Z_preds["RL"] - bg + eps, eps, None)
+        im4 = ax4.imshow(ex4, origin="lower", extent=[X.min(), X.max(), Y.min(), Y.max()],
+                        cmap=cmap, norm=norm, interpolation=interp)
+        ax4.set_title("GP prediction - RL", fontsize=14)
+        ax4.set_aspect("equal"); ax4.set_xlabel("East [m]"); ax4.set_ylabel("North [m]")
 
-        # 4) RL GP prediction
-        Z_rl = Z_preds["RL"]
-        #im4 = ax4.pcolormesh(X, Y, Z_rl, cmap="viridis", shading="auto")
-        im4 = ax4.imshow(
-            Z_rl,
-            origin="lower",
-            extent=[X.min(), X.max(), Y.min(), Y.max()],
-            cmap="viridis",
-            interpolation="bicubic"  # <-- makes the image smooth
-        )
-        ax4.set_title("GP prediction – RL")
-        ax4.set_aspect("equal", adjustable="box")
-        ax4.set_xlabel("x"); ax4.set_ylabel("y")
-        cbar4 = fig.colorbar(im4, ax=ax4)
-        cbar4.set_label("Predicted value")
+        fig.suptitle(f"{title_prefix}", fontsize=16)
 
-        fig.suptitle(f"{title_prefix}", fontsize=14)
-        plt.tight_layout()
+        # place colorbar in reserved area
+        cbar_ax = fig.add_axes([0.85, 0.08, 0.02, 0.80])  # [left, bottom, width, height]
+        cbar = fig.colorbar(im1, cax=cbar_ax)
+
+        ticks = cbar.get_ticks()
+        cbar.set_ticks(ticks[1:7])
+        cbar.set_ticklabels(["≤550", "550.1"] + [f"{bg + t:.0f}" for t in ticks[3:7]], fontsize=14)
+        cbar.set_label("Predicted concentration")
+        
         plt.show()
 
     return results
@@ -444,7 +445,7 @@ def evaluate_strategies_for_field(
             interpolation="bicubic"  # <-- makes the image smooth
         )
 
-        ax1.set_title("True field")
+        ax1.set_title("GP prediction - true field")
         ax1.set_aspect("equal", adjustable="box")
         ax1.set_xlabel("x"); ax1.set_ylabel("y")
         cbar1 = fig.colorbar(im1, ax=ax1)
@@ -460,7 +461,7 @@ def evaluate_strategies_for_field(
             cmap="viridis",
             interpolation="bicubic"  # <-- makes the image smooth
         )
-        ax2.set_title("GP prediction – Lawnmower")
+        ax2.set_title("GP prediction – lawnmower")
         ax2.set_aspect("equal", adjustable="box")
         ax2.set_xlabel("x"); ax2.set_ylabel("y")
         cbar2 = fig.colorbar(im2, ax=ax2)
@@ -509,6 +510,151 @@ def tighten_axis(ax, X, Y):
     ax.set_ylim(np.min(Y), np.max(Y))
     ax.set_aspect("equal", adjustable="box")
     ax.margins(0)
+
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.colors import LogNorm
+import numpy as np
+
+def plot_sampling_comparison_lognorm_gridspec(
+    env_xy, values,
+    measurement_coords_lawnmower, measurements_lawnmower,
+    ducb_coords, ducb_vals,
+    rl_coords, rl_vals,
+    obs_x, obs_y,            # grid resolution of env_xy (e.g., 100 × 100)
+    cmap="viridis",
+    title="Sampling strategies vs true field",
+):
+    """
+    Creates a 2×2 figure (using GridSpec and LogNorm scaling):
+      (1) True scalar field (smooth imshow with log-scaled excess above background)
+      (2) Lawnmower samples (points colored by measurement, same log scale)
+      (3) DUCB samples
+      (4) RL samples
+
+    Assumes env_xy is (N,2) covering a regular obs_y × obs_x grid.
+    """
+
+    # --- 1. Reshape true field into 2D grid --------------------------------
+    X = env_xy[:, 0].reshape(obs_y, obs_x)
+    Y = env_xy[:, 1].reshape(obs_y, obs_x)
+    Z_true = values.reshape(obs_y, obs_x)
+
+    lawn_xy  = np.asarray(measurement_coords_lawnmower)
+    lawn_val = np.asarray(measurements_lawnmower)
+    ducb_xy  = np.asarray(ducb_coords)
+    ducb_val = np.asarray(ducb_vals)
+    rl_xy    = np.asarray(rl_coords)
+    rl_val   = np.asarray(rl_vals)
+
+    # --- 2. LogNorm scaling parameters (same idea as GP plot) --------------
+    bg  = 550.0    # background concentration
+    eps = 1e-2     # small offset to avoid log(0)
+
+    # Excess above background, clipped at eps
+    excess_true  = np.clip(Z_true      - bg + eps, eps, None)
+    excess_lawn  = np.clip(lawn_val    - bg + eps, eps, None)
+    excess_ducb  = np.clip(ducb_val    - bg + eps, eps, None)
+    excess_rl    = np.clip(rl_val      - bg + eps, eps, None)
+
+    # Global vmax – either fixed or from data
+    vmax_data = np.nanmax([
+        np.nanmax(excess_true),
+        np.nanmax(excess_lawn) if excess_lawn.size > 0 else eps,
+        np.nanmax(excess_ducb) if excess_ducb.size > 0 else eps,
+        np.nanmax(excess_rl)   if excess_rl.size > 0 else eps
+    ])
+    vmin = eps
+    vmax = max(vmax_data, 2000 - bg + eps)  # follow your earlier choice
+
+    norm = LogNorm(vmin=vmin, vmax=vmax)
+    interp = "bicubic"
+
+    # --- 3. Figure + GridSpec layout ---------------------------------------
+    fig = plt.figure(figsize=(12, 9), dpi=300)
+    gs = gridspec.GridSpec(
+        2, 2,
+        figure=fig,
+        wspace=-0.28,   # tight horizontal spacing
+        hspace=0.25,   # vertical spacing
+        left=0.05,
+        right=0.92,    # leave space on the right for colorbar
+        bottom=0.07,
+        top=0.90
+    )
+
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax3 = fig.add_subplot(gs[1, 0])
+    ax4 = fig.add_subplot(gs[1, 1])
+
+    for ax in (ax1, ax2, ax3, ax4):
+        ax.grid(False)
+        ax.set_aspect("equal", adjustable="box")
+        ax.tick_params(axis="both", labelsize=10)
+
+    # --- Helper: scatter sampling points with same norm --------------------
+    def scatter_samples(ax, bg_xy, bg_z, samp_xy, samp_z, title):
+        # light gray background grid points
+        ax.scatter(bg_xy[:, 0], bg_xy[:, 1],
+                   c="lightgray", s=4, alpha=0.3, linewidths=0)
+
+        if samp_xy.size == 0:
+            ax.set_title(title + " (no samples)", fontsize=13)
+            ax.set_xlabel("East [m]", fontsize=12)
+            ax.set_ylabel("North [m]", fontsize=12)
+            return
+
+        excess = np.clip(samp_z - bg + eps, eps, None)
+
+        sc = ax.scatter(
+            samp_xy[:, 0], samp_xy[:, 1],
+            c=excess,
+            cmap=cmap,
+            norm=norm,
+            s=12,
+            linewidths=0,
+        )
+        ax.set_title(title, fontsize=14)
+        ax.set_xlabel("East [m]", fontsize=12)
+        ax.set_ylabel("North [m]", fontsize=12)
+
+        return sc
+
+    # Flatten env_xy for background scatter (same grid as X, Y)
+    env_xy_flat = env_xy.reshape(-1, 2)
+
+    scatter_samples(ax1, env_xy_flat, Z_true.ravel(),
+                    env_xy_flat, values,
+                    "True scalar field")
+
+    # --- 5. Panels (2–4): Sampling strategies ------------------------------
+    scatter_samples(ax2, env_xy_flat, Z_true.ravel(),
+                    lawn_xy, lawn_val,
+                    "Lawnmower sampling")
+
+    scatter_samples(ax3, env_xy_flat, Z_true.ravel(),
+                    ducb_xy, ducb_val,
+                    "DUCB sampling")
+
+    sc4 = scatter_samples(ax4, env_xy_flat, Z_true.ravel(),
+                          rl_xy, rl_val,
+                          "RL sampling")
+
+    # --- 6. Shared vertical colorbar on the right --------------------------
+    # We'll anchor it with im1 (same norm & cmap as all panels)
+    cbar_ax = fig.add_axes([0.85, 0.08, 0.02, 0.80])  # [left, bottom, width, height]
+    cbar = fig.colorbar(sc4, cax=cbar_ax)
+
+    ticks = cbar.get_ticks()
+    cbar.set_ticks(ticks[1:7])
+    # Relabel in terms of absolute concentration: bg + excess
+    cbar.set_ticklabels(["≤550", "550.1"] + [f"{bg + t:.0f}" for t in ticks[3:7]], fontsize=14)
+    cbar.ax.tick_params(labelsize=14)
+    cbar.set_label("Concentration", fontsize=14)
+
+    fig.suptitle(title, fontsize=16)
+    plt.show()
 
 def plot_sampling_comparison(
     env_xy, values,
@@ -600,11 +746,6 @@ def plot_sampling_comparison(
     ax4.set_xlabel("x"); ax4.set_ylabel("y")
     cbar4 = fig.colorbar(im4, ax=ax4)
     cbar4.set_label("Measured value (RL)")
-    
-    tighten_axis(ax1, X, Y)
-    tighten_axis(ax2, X, Y)
-    tighten_axis(ax3, X, Y)
-    tighten_axis(ax4, X, Y)
     
     # layout
     fig.suptitle(title, fontsize=14)

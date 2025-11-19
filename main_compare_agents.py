@@ -47,13 +47,11 @@ if device is None:
     else:
         device = torch.device("cpu")
     
-# %%
 # Important parameters
 max_offset_factors = (0.7, 0.7)
 turn_radius = 25
 gp_pred_resolution = [100, 100]
 
-# %%
 # Setup scenario bank
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
@@ -155,7 +153,7 @@ env_ducb = rl_gas_survey_dubins_agent_env.GasSurveyDubinsAgentEnv(bank, gp_pred_
 env_device = torch.device("cpu")
 action_mode = ['relative', 20, 20]
 channels_rl = np.array([1, 1, 0, 0, 0])
-env_rl = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[5.0, 1.0, 1.0], channels=channels_rl, turn_radius = turn_radius, timer=False, debug=True, device=env_device)
+env_rl = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=[5.0, 1.0, 1.0], channels=channels_rl, turn_radius = turn_radius, timer=False, debug=False, device=env_device)
 
 #load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 #load_model = '1761655432_dunder_0_10329902.zip'
@@ -196,7 +194,7 @@ cumsum_rl_all = []
 
 i = 0
 print('Running..')
-while i < 10:
+while i < 30:
     print(f'Scenario {i}...')
     
     # Sample a scenario
@@ -253,7 +251,7 @@ while i < 10:
     obs, _ = env_rl.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
     env_rl.loc = ducb_init_loc
     env_rl.heading = ducb_init_hdg
-    done = False
+    truncated = False
     rewards = np.array([])
     q_values = []
 
@@ -292,7 +290,7 @@ while i < 10:
             "RL":        (measurement_coords_rl[:j], measurements_rl[:j]),
         }
 
-        results_intermediate = gpt_ard32.evaluate_strategies_for_field(
+        results_intermediate = gpt_ard32.evaluate_strategies_for_field_lognorm_gridspec(
             base_model, lik,
             obs_truth_coords, obs_truth_values,
             strategy_samples,
@@ -300,7 +298,7 @@ while i < 10:
             obs_x=env_rl.obs_x,
             obs_y=env_rl.obs_y,
             make_plot=True,   # or False for batch runs
-            title_prefix=f"GP predictions for field {i} ({j} samples)"
+            title_prefix=f"GP predictions for depth {random_scenario['depth']}, t={random_scenario['time']*10} ({j} samples)"
         )
 
     strategy_samples = {
@@ -309,7 +307,7 @@ while i < 10:
             "RL":        (measurement_coords_rl[:n_samples_lim], measurements_rl[:n_samples_lim]),
         }
     
-    gpt_ard32.plot_sampling_comparison(
+    gpt_ard32.plot_sampling_comparison_lognorm_gridspec(
         env_xy=env_xy,
         values=values,
         measurement_coords_lawnmower=measurement_coords_lawnmower,
@@ -460,7 +458,7 @@ for name in strategy_names:
 # Plotting
 #env_rl.plot_env(x=env_xy[:, 0], y=env_xy[:, 1], c=values) # original env
 #env_rl.plot_env(x=measurement_coords_lawnmower[:, 0], y=measurement_coords_lawnmower[:, 1], c=measurements_lawnmower)
-env_ducb.plot_env(x=env_ducb.sampled_coords[:, 0][:env_ducb.sample_idx], y=env_ducb.sampled_coords[:, 1][:env_ducb.sample_idx], c=env_ducb.sampled_vals[:env_ducb.sample_idx])
+#env_ducb.plot_env(x=env_ducb.sampled_coords[:, 0][:env_ducb.sample_idx], y=env_ducb.sampled_coords[:, 1][:env_ducb.sample_idx], c=env_ducb.sampled_vals[:env_ducb.sample_idx])
 #env_rl.plot_env(x=env_rl.sampled_coords[:, 0][:env_rl.sample_idx], y=env_rl.sampled_coords[:, 1][:env_rl.sample_idx], c=env_rl.sampled_vals[:env_rl.sample_idx])
 
 # %%
