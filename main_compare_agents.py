@@ -10,7 +10,8 @@ import torch
 import numpy as np
 from stable_baselines3 import DQN
 import matplotlib.pyplot as plt
-import gpytorch
+#import gpytorch
+import copy
 
 import rl_scenario_bank
 import lawnmower_path as lp
@@ -97,9 +98,6 @@ threshold = 550 # gas plume threshold
 
 # %%
 # Setup lawnmower pattern, DUCB agent and RL agent
-strategy_names = ["Lawnmower", "DUCB", "RL"]
-results = gpt_ard32.init_strategy_results(strategy_names)
-
 # Setup lawnmower sampling (without knowing the flow direction)
 # Example simulation parameters
 sample_radius = 2.0
@@ -142,12 +140,16 @@ sample_coords_xy = [row[:2] for row in plain_sample_coords_times_list]
 
 # Setup adaptive sampling agent
 adaptive_channels = np.array([1, 1, 0, 1, 1])
-kappa = 255/20.0
-gamma = -1.0
-n_samples_lim = len(sample_coords_xy)
+kappas = [255/15.0, 255/20.0, 255/25.0]
+gammas = [-0.9, -1.0, -1.1]
+ducb_names = []
+for kappa in kappas:
+    for gamma in gammas:
+        name = f"DUCB_k{kappa:.2f}_g{gamma:.1f}"
+        ducb_names.append(name)
 
 # init agent env class
-env_ducb = rl_gas_survey_dubins_agent_env.GasSurveyDubinsAgentEnv(bank, gp_pred_resolution=gp_pred_resolution, r_weights=[1.0, 1.0, 1.0], turn_radius=turn_radius, channels=adaptive_channels, timer=False, debug=False)
+env_ducb_main = rl_gas_survey_dubins_agent_env.GasSurveyDubinsAgentEnv(bank, gp_pred_resolution=gp_pred_resolution, r_weights=[1.0, 1.0, 1.0], turn_radius=turn_radius, channels=adaptive_channels, timer=False, debug=False)
 
 # Setup RL agent
 env_device = torch.device("cpu")
@@ -162,6 +164,7 @@ models_dir = f"models"
 agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
 
 # Sample limits and sample intervals for GP testing
+n_samples_lim = len(sample_coords_xy)
 sample_start = 1000
 sample_step = 200
 sample_end = (n_samples_lim)-((n_samples_lim-sample_start)%sample_step)
@@ -185,16 +188,18 @@ cumsum_ducb = torch.zeros(n_samples_lim)
 cumsum_rl = torch.zeros(n_samples_lim)
 
 rmse_lawnmower_all = []
-rmse_ducb_all = []
+rmse_ducb_all = {name: [] for name in ducb_names}
+#rmse_ducb_all = []
 rmse_rl_all = []
 
 cumsum_lawnmower_all = []
-cumsum_ducb_all = []
+cumsum_ducb_all = {name: [] for name in ducb_names}
+#cumsum_ducb_all = []
 cumsum_rl_all = []
 
 i = 0
 print('Running..')
-while i < 30:
+while i < 10:
     print(f'Scenario {i}...')
     
     # Sample a scenario
@@ -235,17 +240,31 @@ while i < 30:
     measurement_coords_lawnmower = torch.tensor(measurement_coords_lawnmower, dtype=torch.float32)
 
     # DUCB sampling
-    obs = env_ducb.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
-    ducb_init_loc = env_ducb.loc
-    ducb_init_hdg = env_ducb.heading
-    ducb_ag = agents.adaptive_agents(model_type='DUCB', obs=obs, kappa=kappa, gamma=gamma, debug=False)
+    obs = env_ducb_main.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
+    ducb_init_loc = env_ducb_main.loc
+    ducb_init_hdg = env_ducb_main.heading
+    ducb_envs = []
+    ducb_ags = []
+    measurements_ducb_list = []
+    measurement_coords_ducb_list = []
 
-    ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
-    while env_ducb.sample_idx < n_samples_lim:
-        ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(env_ducb.step(waypoints=ducb_wps, heading=ducb_hdg))
+    for kappa in kappas:
+        for gamma in gammas:
+            env_ducb = copy.deepcopy(env_ducb_main)
+            #obs = env_ducb.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
+            
+            ducb_ag = agents.adaptive_agents(model_type='DUCB', obs=obs, kappa=kappa, gamma=gamma, debug=False)
 
-    measurements_ducb = env_ducb.sampled_vals[:n_samples_lim]
-    measurement_coords_ducb = env_ducb.sampled_coords[:n_samples_lim]
+            ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
+            while env_ducb.sample_idx < n_samples_lim:
+                ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(env_ducb.step(waypoints=ducb_wps, heading=ducb_hdg))
+
+            measurements_ducb = env_ducb.sampled_vals[:n_samples_lim]
+            measurement_coords_ducb = env_ducb.sampled_coords[:n_samples_lim]
+            measurements_ducb_list.append(measurements_ducb)
+            measurement_coords_ducb_list.append(measurement_coords_ducb)
+            ducb_envs.append(env_ducb)
+            ducb_ags.append(ducb_ag)
 
     # RL agent sampling
     obs, _ = env_rl.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
@@ -275,20 +294,37 @@ while i < 30:
     # Compare GP estimates with truth
     
     # Get obs_truth from DUCB env for comparison with GP prediction
-    obs_truth_coords = env_ducb._coords_flat
-    obs_truth_values = torch.as_tensor(env_ducb.obs_truth)
+    obs_truth_coords = env_ducb_main._coords_flat
+    obs_truth_values = torch.as_tensor(env_ducb_main.obs_truth)
 
     # Update GP hyperparams according to current scenario
     base_model.set_hyperparams(ell_par, ell_perp, angle_deg=random_scenario['cur_dir'], outputscale=max(sig_par, sig_perp), mean_value=obs_truth_values.mean().item())
-
+    
+    strategy_names = ["Lawnmower", "RL"] + ducb_names
     results_intermediate = gpt_ard32.init_strategy_results(strategy_names)
     for j in gp_iterator:
         print(f'intermediate prediction (j = {j})')
+        
+        # Base strategies
         strategy_samples = {
-            "Lawnmower": (measurement_coords_lawnmower[:j], measurements_lawnmower[:j]),
-            "DUCB":      (measurement_coords_ducb[:j], measurements_ducb[:j]),
-            "RL":        (measurement_coords_rl[:j], measurements_rl[:j]),
+            "Lawnmower": (
+                measurement_coords_lawnmower[:j],
+                measurements_lawnmower[:j],),
+            "RL": (
+                measurement_coords_rl[:j],
+                measurements_rl[:j],),
         }
+
+        # Add each DUCB variant as its own strategy
+        for name, coords_ducb, vals_ducb in zip(
+            ducb_names, measurement_coords_ducb_list, measurements_ducb_list):
+            strategy_samples[name] = (coords_ducb[:j], vals_ducb[:j])
+        
+        #strategy_samples = {
+        #    "Lawnmower": (measurement_coords_lawnmower[:j], measurements_lawnmower[:j]),
+        #    "DUCB":      (measurement_coords_ducb[:j], measurements_ducb[:j]),
+        #    "RL":        (measurement_coords_rl[:j], measurements_rl[:j]),
+        #}
 
         results_intermediate = gpt_ard32.evaluate_strategies_for_field_lognorm_gridspec(
             base_model, lik,
@@ -297,162 +333,228 @@ while i < 30:
             results_intermediate,
             obs_x=env_rl.obs_x,
             obs_y=env_rl.obs_y,
-            make_plot=True,   # or False for batch runs
+            make_plot=False,   # or False for batch runs
             title_prefix=f"GP predictions for depth {random_scenario['depth']}, t={random_scenario['time']*10} ({j} samples)"
         )
 
-    strategy_samples = {
-            "Lawnmower": (measurement_coords_lawnmower[:n_samples_lim], measurements_lawnmower[:n_samples_lim]),
-            "DUCB":      (measurement_coords_ducb[:n_samples_lim], measurements_ducb[:n_samples_lim]),
-            "RL":        (measurement_coords_rl[:n_samples_lim], measurements_rl[:n_samples_lim]),
-        }
+    #strategy_samples = {
+    #        "Lawnmower": (measurement_coords_lawnmower[:n_samples_lim], measurements_lawnmower[:n_samples_lim]),
+    #        "DUCB":      (measurement_coords_ducb[:n_samples_lim], measurements_ducb[:n_samples_lim]),
+    #        "RL":        (measurement_coords_rl[:n_samples_lim], measurements_rl[:n_samples_lim]),
+    #    }
     
-    gpt_ard32.plot_sampling_comparison_lognorm_gridspec(
-        env_xy=env_xy,
-        values=values,
-        measurement_coords_lawnmower=measurement_coords_lawnmower,
-        measurements_lawnmower=measurements_lawnmower,
-        ducb_coords=measurement_coords_ducb,
-        ducb_vals=measurements_ducb,
-        rl_coords=measurement_coords_rl,
-        rl_vals=measurements_rl,
-        obs_x=250, obs_y=250
+    plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples)
+
+    gpt_ard32.plot_sampling_comparison_n_plots(
+        env_xy, values,
+        plot_coords, plot_vals, plot_labels,
+        obs_x=250, obs_y=250,
+        title="Sampling strategies vs true field",
     )
+
+    # gpt_ard32.plot_sampling_comparison_lognorm_gridspec(
+    #     env_xy=env_xy,
+    #     values=values,
+    #     measurement_coords_lawnmower=measurement_coords_lawnmower,
+    #     measurements_lawnmower=measurements_lawnmower,
+    #     ducb_coords=measurement_coords_ducb,
+    #     ducb_vals=measurements_ducb,
+    #     rl_coords=measurement_coords_rl,
+    #     rl_vals=measurements_rl,
+    #     obs_x=250, obs_y=250
+    # )
     
     # Comparison statistics
-    #   1. ACCUMULATE RMSE PER FIELD
     # -------------------------------
-    rmse_lawn  = torch.tensor(results_intermediate["Lawnmower"]["rmse"], dtype=torch.float32)
-    rmse_du    = torch.tensor(results_intermediate["DUCB"]["rmse"], dtype=torch.float32)
-    rmse_rl_v  = torch.tensor(results_intermediate["RL"]["rmse"], dtype=torch.float32)
+    # 1. ACCUMULATE RMSE PER FIELD
+    # -------------------------------
+    rmse_lawn = torch.tensor(
+        results_intermediate["Lawnmower"]["rmse"],
+        dtype=torch.float32
+    )
+    rmse_rl_v = torch.tensor(
+        results_intermediate["RL"]["rmse"],
+        dtype=torch.float32
+    )
 
     rmse_lawnmower_all.append(rmse_lawn)
-    rmse_ducb_all.append(rmse_du)
     rmse_rl_all.append(rmse_rl_v)
 
-    #   2. ACCUMULATE GAS-DETECTION STATS
+    # All DUCB variants
+    for name in ducb_names:
+        rmse_du = torch.tensor(
+            results_intermediate[name]["rmse"],
+            dtype=torch.float32
+        )
+        rmse_ducb_all[name].append(rmse_du)
+    
+    #   1. ACCUMULATE RMSE PER FIELD
     # -------------------------------
-    # Lawnmower (fixed length):
-    c_lawn = torch.cumsum((measurements_lawnmower > threshold).int(), dim=0)
+    # rmse_lawn  = torch.tensor(results_intermediate["Lawnmower"]["rmse"], dtype=torch.float32)
+    # rmse_du    = torch.tensor(results_intermediate["DUCB"]["rmse"], dtype=torch.float32)
+    # rmse_rl_v  = torch.tensor(results_intermediate["RL"]["rmse"], dtype=torch.float32)
+
+    # rmse_lawnmower_all.append(rmse_lawn)
+    # rmse_ducb_all.append(rmse_du)
+    # rmse_rl_all.append(rmse_rl_v)
+
+    # -------------------------------
+    # 2. ACCUMULATE GAS-DETECTION STATS
+    # -------------------------------
+    threshold = 550  # or whatever you use
+
+    # Lawnmower (fixed length)
+    c_lawn = torch.cumsum(
+        (measurements_lawnmower > threshold).int(),
+        dim=0
+    )
     cumsum_lawnmower_all.append(c_lawn)
 
-    # DUCB (fixed length):
-    c_du = torch.cumsum((measurements_ducb > threshold).int(), dim=0)
-    cumsum_ducb_all.append(c_du)
+    # DUCB agents (assumed fixed length n_samples_lim each)
+    for name, meas_ducb in zip(ducb_names, measurements_ducb_list):
+        meas_ducb_t = torch.as_tensor(meas_ducb)
+        c_du = torch.cumsum(
+            (meas_ducb_t > threshold).int(),
+            dim=0
+        )
+        # if you want to enforce length n_samples_lim:
+        c_du = c_du[:n_samples_lim]
+        cumsum_ducb_all[name].append(c_du)
 
-    # RL (variable length):
-    L = measurements_rl.shape[0]
-    detect_rl = (measurements_rl > threshold).int()
+    # RL (variable length)
+    meas_rl_t = torch.as_tensor(measurements_rl)
+    L = meas_rl_t.shape[0]
+    detect_rl = (meas_rl_t > threshold).int()
     c_rl = torch.cumsum(detect_rl, dim=0)
 
     # Pad to full length n_samples_lim by holding the last value
     if L < n_samples_lim:
         pad_val = c_rl[-1].item()
-        padded = torch.cat([c_rl, pad_val * torch.ones(n_samples_lim - L, dtype=torch.int)])
+        padded = torch.cat(
+            [c_rl, pad_val * torch.ones(n_samples_lim - L, dtype=torch.int)]
+        )
     else:
         padded = c_rl[:n_samples_lim]
 
     cumsum_rl_all.append(padded)
 
-    #rmse_lawnmower += torch.tensor(results_intermediate['Lawnmower']["rmse"])
-    #rmse_ducb += torch.tensor(results_intermediate['DUCB']["rmse"])
-    #rmse_rl += torch.tensor(results_intermediate['RL']["rmse"])
+    #   2. ACCUMULATE GAS-DETECTION STATS
+    # -------------------------------
+    # Lawnmower (fixed length):
+    # c_lawn = torch.cumsum((measurements_lawnmower > threshold).int(), dim=0)
+    # cumsum_lawnmower_all.append(c_lawn)
 
-    #threshold = 550
-    #x = torch.arange(0, n_samples_lim)
-    #cumsum_lawnmower += torch.cumsum((measurements_lawnmower > threshold).int(), dim=0)
-    #cumsum_ducb += torch.cumsum((measurements_ducb > threshold).int(), dim=0)
-    #L = measurements_rl.shape[0]                  # length of the current measurement vector
-    #cs_rl = torch.cumsum((measurements_rl > threshold).int(), dim=0)
-    #cumsum_rl[:L] += cs_rl
-    #cumsum_rl[L:] += cs_rl[-1].item()
+    # # DUCB (fixed length):
+    # c_du = torch.cumsum((measurements_ducb > threshold).int(), dim=0)
+    # cumsum_ducb_all.append(c_du)
+
+    # # RL (variable length):
+    # L = measurements_rl.shape[0]
+    # detect_rl = (measurements_rl > threshold).int()
+    # c_rl = torch.cumsum(detect_rl, dim=0)
+
+    # # Pad to full length n_samples_lim by holding the last value
+    # if L < n_samples_lim:
+    #     pad_val = c_rl[-1].item()
+    #     padded = torch.cat([c_rl, pad_val * torch.ones(n_samples_lim - L, dtype=torch.int)])
+    # else:
+    #     padded = c_rl[:n_samples_lim]
+
+    # cumsum_rl_all.append(padded)
 
     i += 1
 
 # Compute final statistics
 rmse_lawnmower_all = torch.stack(rmse_lawnmower_all).to(dtype=torch.float)   # (N, 6)
-rmse_ducb_all      = torch.stack(rmse_ducb_all).to(dtype=torch.float)        # (N, 6)
+#rmse_ducb_all      = torch.stack(rmse_ducb_all).to(dtype=torch.float)        # (N, 6)
 rmse_rl_all        = torch.stack(rmse_rl_all).to(dtype=torch.float)          # (N, 6)
 
 cumsum_lawnmower_all = torch.stack(cumsum_lawnmower_all).to(dtype=torch.float)  # (N, T)
-cumsum_ducb_all      = torch.stack(cumsum_ducb_all).to(dtype=torch.float)
+#cumsum_ducb_all      = torch.stack(cumsum_ducb_all).to(dtype=torch.float)
 cumsum_rl_all        = torch.stack(cumsum_rl_all).to(dtype=torch.float)
+
+# For each DUCB agent, stack its list of results
+rmse_ducb_all_stacked = {}   # name → (N_fields, 6)
+cumsum_ducb_all_stacked = {} # name → (N_fields, T)
+
+for name, lst in rmse_ducb_all.items():
+    rmse_ducb_all_stacked[name] = torch.stack(lst).float()
+
+for name, lst in cumsum_ducb_all.items():
+    cumsum_ducb_all_stacked[name] = torch.stack(lst).float()
 
 # Means
 rmse_mean_lm  = rmse_lawnmower_all.mean(dim=0)
-rmse_mean_du  = rmse_ducb_all.mean(dim=0)
+#rmse_mean_du  = rmse_ducb_all.mean(dim=0)
 rmse_mean_rl  = rmse_rl_all.mean(dim=0)
+rmse_mean_ducb = {}   # name → (6,)
+for name, arr in rmse_ducb_all_stacked.items():
+    rmse_mean_ducb[name] = arr.mean(dim=0)
 
 # Variances
 rmse_var_lm   = rmse_lawnmower_all.var(dim=0)
-rmse_var_du   = rmse_ducb_all.var(dim=0)
+#rmse_var_du   = rmse_ducb_all.var(dim=0)
 rmse_var_rl   = rmse_rl_all.var(dim=0)
+rmse_var_ducb = {}   # name → (6,)
+for name, arr in rmse_ducb_all_stacked.items():
+    rmse_var_ducb[name] = arr.var(dim=0)
 
+# --- CUMSUM ---
 cumsum_mean_lm = cumsum_lawnmower_all.mean(dim=0)
-cumsum_var_lm  = cumsum_lawnmower_all.var(dim=0)
-cumsum_mean_du = cumsum_ducb_all.mean(dim=0)
-cumsum_var_du  = cumsum_ducb_all.var(dim=0)
 cumsum_mean_rl = cumsum_rl_all.mean(dim=0)
-cumsum_var_rl  = cumsum_rl_all.var(dim=0)
+cumsum_mean_ducb = {}  # name → (T,)
+for name, arr in cumsum_ducb_all_stacked.items():
+    cumsum_mean_ducb[name] = arr.mean(dim=0)
+
+cumsum_var_lm = cumsum_lawnmower_all.var(dim=0)
+cumsum_var_rl = cumsum_rl_all.var(dim=0)
+cumsum_var_ducb = {}  # name → (T,)
+for name, arr in cumsum_ducb_all_stacked.items():
+    cumsum_var_ducb[name] = arr.var(dim=0)
+
+# cumsum_mean_lm = cumsum_lawnmower_all.mean(dim=0)
+# cumsum_var_lm  = cumsum_lawnmower_all.var(dim=0)
+# cumsum_mean_du = cumsum_ducb_all.mean(dim=0)
+# cumsum_var_du  = cumsum_ducb_all.var(dim=0)
+# cumsum_mean_rl = cumsum_rl_all.mean(dim=0)
+# cumsum_var_rl  = cumsum_rl_all.var(dim=0)
 
 # %%
 # Plotting
-gpt_ard32.plot_rmse_with_confidence(rmse_lawnmower_all, rmse_ducb_all, rmse_rl_all, gp_iterator)
-gpt_ard32.plot_cumsum_with_variance(cumsum_lawnmower_all, cumsum_ducb_all, cumsum_rl_all)
-gpt_ard32.plot_rmse_and_cumsum_panels(rmse_lawnmower_all, rmse_ducb_all, rmse_rl_all,
-                                cumsum_lawnmower_all, cumsum_ducb_all, cumsum_rl_all,
-                                gp_iterator)
-'''
-# Cumsum gas plume samples
-plt.style.use("seaborn-v0_8-whitegrid")  # minimal grid style
-fig, ax = plt.subplots(figsize=(7, 4.5), dpi=150)
+#gpt_ard32.plot_rmse_with_confidence(rmse_lawnmower_all, rmse_ducb_all, rmse_rl_all, gp_iterator)
+# gpt_ard32.plot_cumsum_with_variance(cumsum_lawnmower_all, cumsum_ducb_all, cumsum_rl_all)
+# gpt_ard32.plot_rmse_and_cumsum_panels(rmse_lawnmower_all, rmse_ducb_all, rmse_rl_all,
+#                                 cumsum_lawnmower_all, cumsum_ducb_all, cumsum_rl_all,
+#                                 gp_iterator)
+gpt_ard32.plot_cumsum_with_variance_multi_ducb(c_lawn=cumsum_lawnmower_all,
+                          c_ducb_dict=cumsum_ducb_all_stacked,
+                          c_rl=cumsum_rl_all)
+gpt_ard32.plot_rmse_with_confidence_multi_ducb(rmse_lawn=rmse_lawnmower_all,            # (N_fields, K)
+                                               rmse_rl=rmse_rl_all,
+                                                rmse_ducb_dict=rmse_ducb_all_stacked,    # dict[name → (N_fields, K)]
+                                                sample_points=gp_iterator)
 
-ax.plot(x, cumsum_lawnmower, lw=2.5, color="#1f77b4", label="Lawnmower")
-ax.plot(x, cumsum_ducb, lw=2.5, color="#ff7f0e", label="DUCB")
-ax.plot(x, cumsum_rl, lw=2.5, color="#2ca02c", label="RL")
+# %%
+# Table view
+table_str = gpt_ard32.build_rmse_table_latex(
+    rmse_lawnmower_all,
+    rmse_ducb_all_stacked,
+    rmse_rl_all=rmse_rl_all,
+    sample_points=gp_iterator,
+    ci_level=1.96,
+    decimals=1,
+)
 
-# --- Beautify ---
-ax.set_xlabel("Sample", fontsize=13)
-ax.set_ylabel("Cumulative sum", fontsize=13)
-ax.set_title("Gas plume samples", fontsize=15, pad=6)
-ax.legend(frameon=False, fontsize=11)
-ax.tick_params(axis='both', which='major', labelsize=11)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-ax.grid(alpha=0.3)
+print(table_str)
 
-plt.tight_layout()
-plt.show()
-
-# GP RMSE mean plot
-plt.style.use("seaborn-v0_8-whitegrid")  # minimal grid style
-fig, ax = plt.subplots(figsize=(7, 4.5), dpi=150)
-
-ax.plot(gp_iterator, rmse_lawnmower, lw=2.5, color="#1f77b4", label="Lawnmower")
-ax.plot(gp_iterator, rmse_ducb, lw=2.5, color="#ff7f0e", label="DUCB")
-ax.plot(gp_iterator, rmse_rl, lw=2.5, color="#2ca02c", label="RL")
-
-# --- Beautify ---
-ax.set_xlabel("Sample", fontsize=13)
-ax.set_ylabel("GP RMSE", fontsize=13)
-ax.set_title("GP RMSE vs number of samples", fontsize=15, pad=6)
-ax.legend(frameon=False, fontsize=11)
-ax.tick_params(axis='both', which='major', labelsize=11)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-ax.grid(alpha=0.3)
-
-plt.tight_layout()
-plt.show()
-'''
 # %%
 # Print summary
-for name in strategy_names:
-    rmse_arr = np.array(results_intermediate[name]["rmse"])
-    nll_arr  = np.array(results_intermediate[name]["nll"])
-    print(f"\n{name}:")
-    print(f"  RMSE: mean={rmse_arr.mean():.4f}, std={rmse_arr.std():.4f}")
-    print(f"  NLL:  mean={nll_arr.mean():.4f}, std={nll_arr.std():.4f}")
+# for name in strategy_names:
+#     rmse_arr = np.array(results_intermediate[name]["rmse"])
+#     nll_arr  = np.array(results_intermediate[name]["nll"])
+#     print(f"\n{name}:")
+#     print(f"  RMSE: mean={rmse_arr.mean():.4f}, std={rmse_arr.std():.4f}")
+#     print(f"  NLL:  mean={nll_arr.mean():.4f}, std={nll_arr.std():.4f}")
 
 # %%
 # Plotting

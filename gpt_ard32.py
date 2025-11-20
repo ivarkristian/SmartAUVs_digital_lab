@@ -511,10 +511,214 @@ def tighten_axis(ax, X, Y):
     ax.set_aspect("equal", adjustable="box")
     ax.margins(0)
 
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from matplotlib.colors import LogNorm
-import numpy as np
+def assemble_agent_plot_data(strategy_samples, agents="all"):
+    """
+    Assemble coords, measurements, and labels from a strategy_samples dict.
+
+    Parameters
+    ----------
+    strategy_samples : dict
+        Mapping: agent_name -> (coords, values)
+        coords : (N,2) torch.Tensor or numpy array
+        values : (N,)  torch.Tensor or numpy array
+    agents : "all" or list of str
+        If "all"  -> include every agent in strategy_samples.
+        If list   -> only include those agent names (if present).
+
+    Returns
+    -------
+    agent_coords_list : list of np.ndarray
+    agent_vals_list   : list of np.ndarray
+    agent_labels      : list of str
+    """
+    # --- Determine which agent labels to include ---
+    if agents == "all":
+        selected_agents = list(strategy_samples.keys())
+    else:
+        # filter only those that exist in the dict
+        selected_agents = [a for a in agents if a in strategy_samples]
+
+    agent_coords_list = []
+    agent_vals_list   = []
+    agent_labels      = []
+
+    # --- Extract and convert to numpy ---
+    for name in selected_agents:
+        coords, vals = strategy_samples[name]
+
+        # Convert coords
+        if torch.is_tensor(coords):
+            coords_np = coords.detach().cpu().numpy()
+        else:
+            coords_np = np.asarray(coords)
+
+        # Convert vals
+        if torch.is_tensor(vals):
+            vals_np = vals.detach().cpu().numpy()
+        else:
+            vals_np = np.asarray(vals)
+
+        agent_labels.append(name)
+        agent_coords_list.append(coords_np)
+        agent_vals_list.append(vals_np)
+
+    return agent_coords_list, agent_vals_list, agent_labels
+
+def plot_sampling_comparison_n_plots(
+    env_xy, values,
+    agent_coords_list,   # list of (N_i, 2) arrays
+    agent_vals_list,     # list of (N_i,) arrays
+    agent_labels,        # list of strings
+    obs_x, obs_y,
+    cmap="viridis",
+    title="Sampling strategies vs true field",
+    show_true_field=True,
+):
+    """
+    Visual comparison of sampling paths for an arbitrary number of agents.
+
+    Layout:
+        If show_true_field=True:
+            First panel = true scalar field
+            Remaining = one panel per agent
+        Otherwise:
+            Only agent panels.
+
+    All panels share:
+        - LogNorm color scale
+        - A single shared vertical colorbar
+
+    Parameters
+    ----------
+    env_xy : array, shape (N, 2)
+    values : array, shape (N,)
+    """
+
+    # reshape grid
+    X = env_xy[:, 0].reshape(obs_y, obs_x)
+    Y = env_xy[:, 1].reshape(obs_y, obs_x)
+    Z_true = values.reshape(obs_y, obs_x)
+
+    # ---------------- LogNorm Scaling ---------------- #
+    bg  = 550.0
+    eps = 1e-2
+
+    excess_true = np.clip(Z_true - bg + eps, eps, None)
+
+    agent_excess_list = []
+    for vals in agent_vals_list:
+        vals_np = np.asarray(vals)
+        if vals_np.size == 0:
+            agent_excess_list.append(np.array([eps]))
+        else:
+            agent_excess_list.append(np.clip(vals_np - bg + eps, eps, None))
+
+    vmax_data = np.nanmax([np.nanmax(excess_true)] +
+                          [np.nanmax(ae) for ae in agent_excess_list])
+
+    vmin = eps
+    vmax = max(vmax_data, 2000 - bg + eps)
+
+    norm = LogNorm(vmin=vmin, vmax=vmax)
+    interp = "bicubic"
+
+    # ---------------- Panel Count ---------------- #
+    n_agents = len(agent_labels)
+    total_panels = n_agents + (1 if show_true_field else 0)
+
+    ncols = 2
+    nrows = int(np.ceil(total_panels / ncols))
+
+    fig_height = 3 + 3 * nrows
+    fig = plt.figure(figsize=(12, fig_height), dpi=300)
+
+    gs = gridspec.GridSpec(
+        nrows, ncols, figure=fig,
+        wspace=-0.38, hspace=0.40,
+        left=0.07, right=0.92,
+        bottom=0.08, top=0.95
+    )
+
+    axes = []
+    for r in range(nrows):
+        for c in range(ncols):
+            if len(axes) < total_panels:
+                axes.append(fig.add_subplot(gs[r, c]))
+
+    for ax in axes:
+        ax.grid(False)
+        ax.set_aspect("equal", adjustable="box")
+        ax.tick_params(axis="both", labelsize=10)
+
+    env_xy_flat = env_xy.reshape(-1, 2)
+
+    # ---------------- Helper: scatter ---------------- #
+    def scatter_samples(ax, samp_xy, samp_vals, label):
+        if samp_xy.size == 0:
+            ax.set_title(label + " (no samples)", fontsize=13)
+            return None
+
+        excess = np.clip(samp_vals - bg + eps, eps, None)
+
+        sc = ax.scatter(
+            samp_xy[:, 0], samp_xy[:, 1],
+            c=excess, cmap=cmap, norm=norm,
+            s=12, linewidths=0
+        )
+        ax.set_title(label, fontsize=13)
+        ax.set_xlabel("East [m]", fontsize=12)
+        ax.set_ylabel("North [m]", fontsize=12)
+        return sc
+
+    # ---------------- Fill Panels ---------------- #
+    panel_idx = 0
+
+    # True field (optional)
+    if show_true_field:
+        ax = axes[panel_idx]
+        panel_idx += 1
+
+        # Flatten env_xy for background scatter (same grid as X, Y)
+        env_xy_flat = env_xy.reshape(-1, 2)
+
+        sc = scatter_samples(ax, env_xy_flat, values, "True scalar field")
+        ax.set_title("True scalar field", fontsize=13)
+        ax.set_xlabel("East [m]", fontsize=12)
+        ax.set_ylabel("North [m]", fontsize=12)
+        mappable_for_cbar = sc
+    else:
+        mappable_for_cbar = None  # will be replaced with first agent scatter
+
+    # Agent panels
+    last_scatter = None
+    for coords, vals, label in zip(agent_coords_list, agent_vals_list, agent_labels):
+        if panel_idx >= len(axes):
+            break
+        ax = axes[panel_idx]
+        panel_idx += 1
+
+        sc = scatter_samples(ax, np.asarray(coords), np.asarray(vals), label)
+        if sc is not None:
+            last_scatter = sc
+            if not show_true_field and mappable_for_cbar is None:
+                mappable_for_cbar = sc
+
+    # ---------------- Shared Colorbar ---------------- #
+    cbar_ax = fig.add_axes([0.85, 0.12, 0.02, 0.70])
+    cbar = fig.colorbar(mappable_for_cbar, cax=cbar_ax)
+
+    ticks = cbar.get_ticks()
+    if len(ticks) > 7:
+        ticks = ticks[1:7]
+        cbar.set_ticks(ticks)
+
+    ticklabels = [f"{bg + t:.0f}" for t in ticks]
+    cbar.set_ticklabels(ticklabels)
+    cbar.ax.tick_params(labelsize=11)
+    cbar.set_label("Concentration", fontsize=12)
+
+    fig.suptitle(title, fontsize=14)
+    plt.show()
 
 def plot_sampling_comparison_lognorm_gridspec(
     env_xy, values,
@@ -752,6 +956,69 @@ def plot_sampling_comparison(
     plt.tight_layout()
     plt.show()
 
+def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl, rmse_ducb_dict, sample_points):
+    """
+    Plot RMSE mean ± 95% CI for Lawn mower and multiple DUCB agents.
+
+    Parameters
+    ----------
+    rmse_lawn : torch.Tensor, shape (N_runs, K)
+        RMSE across runs for the lawnmower strategy.
+    rmse_ducb_dict : dict
+        Mapping: ducb_name -> torch.Tensor of shape (N_runs, K)
+    sample_points : array-like, shape (K,)
+        Sample counts, e.g. [1000, 1200, 1400, 1600, 1800, 1948]
+    """
+
+    # Convert lawnmower
+    L = rmse_lawn.cpu().numpy()
+    R = rmse_rl.cpu().numpy()
+
+    # Convert DUCBs
+    ducb_np = {
+        name: arr.cpu().numpy()
+        for name, arr in rmse_ducb_dict.items()
+    }
+
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=300)
+
+    def add_curve(data, label, color, ls, alpha_fill=0.18):
+        mean = data.mean(axis=0)
+        std  = data.std(axis=0)
+
+        ci_low  = mean - 1.96 * std / np.sqrt(data.shape[0])
+        ci_high = mean + 1.96 * std / np.sqrt(data.shape[0])
+
+        ax.plot(sample_points, mean, label=label,
+                color=color, linestyle=ls, lw=2)
+        ax.fill_between(sample_points, ci_low, ci_high,
+                        color=color, alpha=alpha_fill)
+
+    # --- Lawn mower (reference) ---
+    add_curve(L, "Lawnmower", "#1f77b4", "-")  # blue, solid
+    add_curve(R, "RL", "black", "--")
+
+    # --- DUCB agents ---
+    # Define a small set of grayscale-friendly styles to cycle through
+    ducb_colors = ["#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2"]
+    ducb_lstyles = ["--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2))]
+
+    ducb_names_sorted = sorted(ducb_np.keys())  # stable order
+
+    for i, name in enumerate(ducb_names_sorted):
+        data = ducb_np[name]
+        color = ducb_colors[i % len(ducb_colors)]
+        ls    = ducb_lstyles[i % len(ducb_lstyles)]
+        add_curve(data, name, color, ls)
+
+    ax.set_xlabel("Number of Samples")
+    ax.set_ylabel("RMSE")
+    ax.set_title("GP Prediction RMSE")
+    ax.grid(alpha=0.3)
+    ax.legend(frameon=False, fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
 def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
     """
     rmse_*: tensors of shape (N_runs, K)  (e.g. K=6 intermediate sample sizes)
@@ -786,6 +1053,67 @@ def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
     ax.set_title("GP Prediction RMSE Across Strategies")
     ax.grid(alpha=0.3)
     ax.legend(frameon=False)
+    plt.tight_layout()
+    plt.show()
+
+def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl):
+    """
+    Plot cumulative detections with mean ± std bands.
+
+    Parameters
+    ----------
+    c_lawn : torch.Tensor, shape (N_runs, T)
+        Cumulative detections for lawnmower.
+    c_ducb_dict : dict[str, torch.Tensor]
+        Mapping: DUCB name -> cumulative detections, shape (N_runs, T).
+    c_rl : torch.Tensor, shape (N_runs, T)
+        Cumulative detections for RL (padded to same T).
+    """
+
+    # --- Convert to numpy ---
+    L = c_lawn.cpu().numpy()
+    R = c_rl.cpu().numpy()
+    D_dict = {name: arr.cpu().numpy() for name, arr in c_ducb_dict.items()}
+
+    T = L.shape[1]
+    x = np.arange(T)
+
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+
+    def add_curve(data, label, color, ls, alpha_fill=0.18):
+        mean = data.mean(axis=0)
+        var  = data.var(axis=0)
+        std  = np.sqrt(var)
+
+        ax.plot(x, mean, label=label, color=color, linestyle=ls, lw=2)
+        ax.fill_between(
+            x,
+            mean - std,
+            mean + std,
+            color=color,
+            alpha=alpha_fill
+        )
+
+    # --- Lawn mower (reference) ---
+    add_curve(L, "Lawnmower", "#1f77b4", "-")   # blue, solid
+    # --- RL (as before) ---
+    add_curve(R, "RL", "black", "--")         # black, dashed
+
+    # --- DUCB variants ---
+    ducb_colors  = ["#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2"]
+    ducb_lstyles = ["--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2))]
+
+    for i, name in enumerate(sorted(D_dict.keys())):
+        data  = D_dict[name]
+        color = ducb_colors[i % len(ducb_colors)]
+        ls    = ducb_lstyles[i % len(ducb_lstyles)]
+        add_curve(data, name, color, ls)
+
+    ax.set_xlabel("Sample Index")
+    ax.set_ylabel("Cumulative detections (> threshold)")
+    ax.set_title("Detection performance across strategies")
+    ax.grid(alpha=0.3)
+    ax.legend(frameon=False, fontsize=9)
     plt.tight_layout()
     plt.show()
 
@@ -880,3 +1208,112 @@ def plot_rmse_and_cumsum_panels(rmse_lawn, rmse_du, rmse_rl,
 
     plt.tight_layout()
     plt.show()
+
+def build_rmse_table_latex(
+    rmse_lawnmower_all,
+    rmse_ducb_all_stacked,   # dict: name -> tensor (N_runs, K)
+    rmse_rl_all=None,        # optional: tensor (N_runs, K)
+    sample_points=None,
+    ci_level=1.96,           # 95% CI by default
+    decimals=3
+):
+    """
+    Build a LaTeX table with RMSE mean ± CI for all agents.
+    Lowest mean per sample point is bolded.
+
+    Parameters
+    ----------
+    rmse_lawnmower_all : torch.Tensor, shape (N_runs, K)
+    rmse_ducb_all_stacked : dict[str, torch.Tensor]
+        Mapping agent_name -> (N_runs, K)
+    rmse_rl_all : torch.Tensor or None
+        If provided, included as an additional agent 'RL'.
+    sample_points : list or array-like of length K
+    ci_level : float
+        Multiplier for std/sqrt(N) to get CI (1.96 for ~95%).
+    decimals : int
+        Number of decimal places in formatted output.
+
+    Returns
+    -------
+    latex_str : str
+        A LaTeX tabular environment as a string.
+    """
+
+    def stats_from_tensor(t: torch.Tensor):
+        t = t.float()
+        mean = t.mean(dim=0).cpu().numpy()
+        std  = t.std(dim=0, unbiased=True).cpu().numpy()
+        n    = t.shape[0]
+        ci   = ci_level * std / np.sqrt(n)
+        return mean, ci
+
+    # ---- Collect all agents and stats ----
+    agent_stats = {}  # name -> (mean, ci)
+
+    mean_lm, ci_lm = stats_from_tensor(rmse_lawnmower_all)
+    agent_stats["Lawnmower"] = (mean_lm, ci_lm)
+
+    if rmse_rl_all is not None:
+        mean_rl, ci_rl = stats_from_tensor(rmse_rl_all)
+        agent_stats["RL"] = (mean_rl, ci_rl)
+
+    for name, arr in rmse_ducb_all_stacked.items():
+        mean_du, ci_du = stats_from_tensor(arr)
+        agent_stats[name] = (mean_du, ci_du)
+
+    # ---- Determine best (lowest) mean per column ----
+    agent_names = list(agent_stats.keys())
+    K = agent_stats[agent_names[0]][0].shape[0]
+
+    if sample_points is None:
+        sample_points = list(range(K))
+
+    # For each column j, find minimal mean across agents
+    best_per_col = []
+    for j in range(K):
+        means_j = [agent_stats[name][0][j] for name in agent_names]
+        min_val = min(means_j)
+        best_per_col.append(min_val)
+
+    # ---- Build LaTeX table ----
+    # Header
+    header_cols = "Agent"
+    for sp in sample_points:
+        header_cols += f" & {sp}"
+    header_cols += r" \\"
+
+    # Column alignment: one left, rest centered
+    col_align = "l" + "c" * K
+
+    lines = []
+    lines.append(r"\begin{tabular}{" + col_align + "}")
+    lines.append(r"\hline")
+    lines.append(header_cols)
+    lines.append(r"\hline")
+
+    # Body
+    for name in agent_names:
+        mean, ci = agent_stats[name]
+
+        # Escape underscores for LaTeX
+        name_tex = name.replace("_", r"\_")
+
+        row = [name_tex]
+        for j in range(K):
+            m = mean[j]
+            c = ci[j]
+            val_str = f"{m:.{decimals}f} $\pm$ {c:.{decimals}f}"
+
+            # Bold if this is the best (lowest mean) for this column
+            if np.isclose(m, best_per_col[j], rtol=1e-6, atol=1e-12):
+                val_str = r"\textbf{" + val_str + "}"
+
+            row.append(val_str)
+
+        lines.append(" & ".join(row) + r" \\")
+    lines.append(r"\hline")
+    lines.append(r"\end{tabular}")
+
+    latex_str = "\n".join(lines)
+    return latex_str
