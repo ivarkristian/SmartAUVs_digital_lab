@@ -72,8 +72,8 @@ ucb_env._estimate()
 ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
 while ducb_env.sample_idx < n_samples_lim:
     ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(ducb_env.step(waypoints=ducb_wps, heading=ducb_hdg))
-    agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_env.pred_mu, ducb_env.pred_mu_norm_clipped], titles=["pred_mu", "pred_mu_norm_clipped"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
-    agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_ag.gas_scaled, ducb_ag.map], titles=["gas_scaled", "ducb map"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
+    #agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_env.pred_mu, ducb_env.pred_mu_norm_clipped], titles=["pred_mu", "pred_mu_norm_clipped"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
+    #agents.plot_n(ducb_env._coord_x, ducb_env._coord_y, [ducb_ag.gas_scaled, ducb_ag.map], titles=["gas_scaled", "ducb map"], path=ducb_env.sampled_coords[:ducb_env.sample_idx])
 ducb_env.sample_idx = n_samples_lim
 ducb_env._estimate()
 

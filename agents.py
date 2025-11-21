@@ -305,6 +305,8 @@ class adaptive_agents():
         lc_dist = lc_mask*(self.dist - self.turn_radius*2)
         self.turn_radius_mask = rc_dist + lc_dist
 
+        self.dubins_dist = dubins_arc_tangent_distance_lr(self.loc, self.hdg, self.turn_radius, self._coords)
+
         match self.type:
             case 'IG':
                 # Highest entropy reduction, in practice go to location with max variance
@@ -322,7 +324,7 @@ class adaptive_agents():
                 # and distance
                 # If multiple locations are tied, go to nearest
                 self.gas_scaled = np.clip(self.gas * self.kappa, 0, 255)
-                self.map = self.gas_scaled + self.var + self.dist * self.gamma + self.turn_radius_mask
+                self.map = self.gas_scaled + self.var + self.dubins_dist * self.gamma# + self.turn_radius_mask
 
             case _:
                 print(f'{self.type} agent not implemented')
@@ -458,5 +460,238 @@ class adaptive_agents():
         
         return best_value_idx
     
+    import numpy as np
 
+def _dubins_arc_tangent_one_circle(C, R, A, P_flat, forward_ccw: bool):
+    """
+    Internal helper: compute arc+tangent+straight distance from A to every P
+    using a single circle (center C, radius R) and a constrained arc direction.
 
+    Parameters
+    ----------
+    C : (2,) array
+    R : float
+    A : (2,) array
+    P_flat : (N,2) array of targets
+    forward_ccw : bool
+        True  -> arc along circle is CCW from A
+        False -> arc along circle is CW from A
+
+    Returns
+    -------
+    L_opt : (N,) array of distances
+    """
+    C = np.asarray(C, dtype=float)
+    A = np.asarray(A, dtype=float)
+    P_flat = np.asarray(P_flat, dtype=float)
+
+    # Vectors from center to targets
+    v = P_flat - C         # (N,2)
+    d = np.linalg.norm(v, axis=1)  # (N,)
+
+    # Ensure targets are outside or just treat inside as just outside
+    mask_inside = d <= R
+    if np.any(mask_inside):
+        d[mask_inside] = R + 1e-6
+
+    # Angles from center to points
+    alpha = np.arctan2(v[:, 1], v[:, 0])  # (N,)
+    beta  = np.arccos(R / d)              # (N,)
+
+    # Two tangent angles
+    theta1 = alpha + beta
+    theta2 = alpha - beta
+
+    # Tangent points
+    T1 = C + R * np.column_stack([np.cos(theta1), np.sin(theta1)])  # (N,2)
+    T2 = C + R * np.column_stack([np.cos(theta2), np.sin(theta2)])  # (N,2)
+
+    # Starting angle on circle
+    theta0 = np.arctan2(A[1] - C[1], A[0] - C[0])
+
+    if forward_ccw:
+        # Move CCW from theta0 to the target angle
+        dtheta1 = (theta1 - theta0) % (2.0 * np.pi)
+        dtheta2 = (theta2 - theta0) % (2.0 * np.pi)
+    else:
+        # Move CW from theta0 to the target angle
+        dtheta1 = (theta0 - theta1) % (2.0 * np.pi)
+        dtheta2 = (theta0 - theta2) % (2.0 * np.pi)
+
+    # Arc lengths
+    s1 = R * dtheta1
+    s2 = R * dtheta2
+
+    # Straight segments
+    l1 = np.linalg.norm(P_flat - T1, axis=1)
+    l2 = np.linalg.norm(P_flat - T2, axis=1)
+
+    # Total path lengths
+    L1 = s1 + l1
+    L2 = s2 + l2
+
+    L1[mask_inside] = np.inf
+    L2[mask_inside] = np.inf
+
+    # Take min over the two tangent solutions
+    #L_opt = np.minimum(L1, L2)
+    if forward_ccw:
+        return L2
+    
+    return L1
+    #return L_opt
+    
+def dubins_arc_tangent_distance_lr(
+    A,                # agent location (x,y)
+    heading_onehot,   # one-hot heading (len=4 or 8)
+    R,                # turn radius
+    P,                # grid of targets, shape (H,W,2) or (N,2)
+    ):
+    """
+    Compute an approximate Dubins-like distance field from agent pose to each P,
+    using left and right turning circles and forward-only arcs.
+
+    Path model for each circle:
+        arc along circle (in allowed direction) + straight tangent to P
+
+    Then:
+        distance = min(distance_via_left_circle, distance_via_right_circle)
+
+    Parameters
+    ----------
+    A : array-like shape (2,)
+        Agent location.
+    heading_onehot : array-like shape (4,) or (8,)
+        One-hot heading; index of '1' -> heading angle 0, 90, 180,... or 45,90,...
+    R : float
+        Turn radius.
+    P : ndarray
+        Target locations, shape (H,W,2) or (N,2).
+
+    Returns
+    -------
+    dist : ndarray
+        Distance field, same shape as P[...,0].
+    """
+
+    A = np.asarray(A, dtype=float)
+    P = np.asarray(P, dtype=float)
+    heading_onehot = np.asarray(heading_onehot, dtype=float)
+
+    # Flatten P
+    original_shape = P.shape[:-1]
+    P_flat = P.reshape(-1, 2)
+
+    # --- Heading angle from one-hot ---
+    idx = int(np.argmax(heading_onehot))
+    n_dirs = len(heading_onehot)
+    heading_angle = idx * (2.0 * np.pi / n_dirs)
+    h = np.array([np.cos(heading_angle), np.sin(heading_angle)], dtype=float)
+
+    # --- Compute left/right circle centers from agent location and heading ---
+    # Left normal = rotate h by +90°, right normal = -left normal
+    n_left  = np.array([-h[1], h[0]], dtype=float)
+    n_right = -n_left
+
+    C_left  = A + R * n_left
+    C_right = A + R * n_right
+
+    # --- Distances via left circle (CCW) and right circle (CW) ---
+    L_left  = _dubins_arc_tangent_one_circle(C_left,  R, A, P_flat, forward_ccw=True)
+    L_right = _dubins_arc_tangent_one_circle(C_right, R, A, P_flat, forward_ccw=False)
+
+    # --- Take elementwise minimum ---
+    L_opt = np.minimum(L_left, L_right)
+
+    return L_opt.reshape(original_shape)
+
+def plot_dubins_distance_contours(
+    X, Y, dubins_dist, levels=15, cmap=None,
+    euclid_dist=None,
+    title="Dubins-based distance field",
+    draw_agent=None, save_path=None
+):
+    """
+    Visualize the Dubins distance field with optional agent drawing.
+
+    Parameters
+    ----------
+    X, Y : 2D arrays
+        Grid coordinates.
+    dubins_dist : 2D array
+        Dubins-like distance field.
+    euclid_dist : 2D array, optional
+        If provided, adds inset comparison.
+    draw_agent : dict, optional
+        {
+            "loc": (x, y),
+            "hdg": one-hot heading vector of length 4 or 8
+        }
+    """
+    fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
+
+    # Filled contour field
+    if cmap:
+        cs = ax.contourf(X, Y, dubins_dist, levels=levels, cmap=cmap)
+        cbar = fig.colorbar(cs, ax=ax)
+        cbar.set_label("Dubins distance")
+
+    # Line contours
+    #ax.contour(X, Y, dubins_dist, levels=levels, colors="k", linewidths=0.5)
+
+    # ----------------------------------------------------------------------
+    # Draw agent (optional)
+    # ----------------------------------------------------------------------
+    if draw_agent is not None:
+        A = np.asarray(draw_agent["loc"], dtype=float)
+        hdg_onehot = np.asarray(draw_agent["hdg"], dtype=float)
+
+        idx = int(np.argmax(hdg_onehot))
+        n_dirs = len(hdg_onehot)
+        heading_angle = idx * (2.0 * np.pi / n_dirs)
+
+        # Heading unit vector
+        h = np.array([np.cos(heading_angle), np.sin(heading_angle)])
+
+        # Arrow length is ~5% of domain size
+        domain_scale = 0.08 * max(X.max() - X.min(), Y.max() - Y.min())
+        arrow = domain_scale * h
+
+        arrow_color = "black"
+
+        ax.arrow(
+            A[0], A[1],
+            arrow[0], arrow[1],
+            width=domain_scale * 0.03,
+            head_width=domain_scale * 0.15,
+            head_length=domain_scale * 0.20,
+            color=arrow_color,
+            length_includes_head=True,
+            zorder=5
+        )
+        ax.plot(A[0], A[1], "ko", markersize=5, zorder=6)
+        ax.text(A[0]-domain_scale*0.9, A[1]-domain_scale*0.6, " agent", color=arrow_color, fontsize=10)
+
+    # ----------------------------------------------------------------------
+    # Optional inset for Euclidean distance
+    # ----------------------------------------------------------------------
+    if euclid_dist is not None:
+        axins = ax.inset_axes([0.65, 0.05, 0.33, 0.33])
+        cs2 = axins.contourf(X, Y, euclid_dist, levels=30, cmap="plasma")
+        axins.set_title("Euclidean")
+        axins.set_xticks([])
+        axins.set_yticks([])
+        fig.colorbar(cs2, ax=axins, fraction=0.046)
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title(title)
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.grid(False)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, format="eps", dpi=300)
+
+    plt.show()

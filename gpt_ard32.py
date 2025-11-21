@@ -653,7 +653,8 @@ def plot_sampling_comparison_n_plots(
     env_xy_flat = env_xy.reshape(-1, 2)
 
     # ---------------- Helper: scatter ---------------- #
-    def scatter_samples(ax, samp_xy, samp_vals, label):
+    def scatter_samples(ax, X, Y, samp_xy, samp_vals, label):
+        ax.scatter(X, Y, c="lightgray", s=5, alpha=0.3, linewidths=0)
         if samp_xy.size == 0:
             ax.set_title(label + " (no samples)", fontsize=13)
             return None
@@ -681,7 +682,7 @@ def plot_sampling_comparison_n_plots(
         # Flatten env_xy for background scatter (same grid as X, Y)
         env_xy_flat = env_xy.reshape(-1, 2)
 
-        sc = scatter_samples(ax, env_xy_flat, values, "True scalar field")
+        sc = scatter_samples(ax, X, Y, env_xy_flat, values, "True scalar field")
         ax.set_title("True scalar field", fontsize=13)
         ax.set_xlabel("East [m]", fontsize=12)
         ax.set_ylabel("North [m]", fontsize=12)
@@ -697,7 +698,7 @@ def plot_sampling_comparison_n_plots(
         ax = axes[panel_idx]
         panel_idx += 1
 
-        sc = scatter_samples(ax, np.asarray(coords), np.asarray(vals), label)
+        sc = scatter_samples(ax, X, Y, np.asarray(coords), np.asarray(vals), label)
         if sc is not None:
             last_scatter = sc
             if not show_true_field and mappable_for_cbar is None:

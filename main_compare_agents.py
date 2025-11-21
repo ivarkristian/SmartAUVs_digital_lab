@@ -197,9 +197,10 @@ cumsum_ducb_all = {name: [] for name in ducb_names}
 #cumsum_ducb_all = []
 cumsum_rl_all = []
 
+# %%
 i = 0
 print('Running..')
-while i < 10:
+while i < 50:
     print(f'Scenario {i}...')
     
     # Sample a scenario
@@ -465,11 +466,11 @@ while i < 10:
     i += 1
 
 # Compute final statistics
-rmse_lawnmower_all = torch.stack(rmse_lawnmower_all).to(dtype=torch.float)   # (N, 6)
+rmse_lm_all = torch.stack(rmse_lawnmower_all).to(dtype=torch.float)   # (N, 6)
 #rmse_ducb_all      = torch.stack(rmse_ducb_all).to(dtype=torch.float)        # (N, 6)
 rmse_rl_all        = torch.stack(rmse_rl_all).to(dtype=torch.float)          # (N, 6)
 
-cumsum_lawnmower_all = torch.stack(cumsum_lawnmower_all).to(dtype=torch.float)  # (N, T)
+cumsum_lm_all = torch.stack(cumsum_lawnmower_all).to(dtype=torch.float)  # (N, T)
 #cumsum_ducb_all      = torch.stack(cumsum_ducb_all).to(dtype=torch.float)
 cumsum_rl_all        = torch.stack(cumsum_rl_all).to(dtype=torch.float)
 
@@ -484,7 +485,7 @@ for name, lst in cumsum_ducb_all.items():
     cumsum_ducb_all_stacked[name] = torch.stack(lst).float()
 
 # Means
-rmse_mean_lm  = rmse_lawnmower_all.mean(dim=0)
+rmse_mean_lm  = rmse_lm_all.mean(dim=0)
 #rmse_mean_du  = rmse_ducb_all.mean(dim=0)
 rmse_mean_rl  = rmse_rl_all.mean(dim=0)
 rmse_mean_ducb = {}   # name → (6,)
@@ -492,7 +493,7 @@ for name, arr in rmse_ducb_all_stacked.items():
     rmse_mean_ducb[name] = arr.mean(dim=0)
 
 # Variances
-rmse_var_lm   = rmse_lawnmower_all.var(dim=0)
+rmse_var_lm   = rmse_lm_all.var(dim=0)
 #rmse_var_du   = rmse_ducb_all.var(dim=0)
 rmse_var_rl   = rmse_rl_all.var(dim=0)
 rmse_var_ducb = {}   # name → (6,)
@@ -500,13 +501,13 @@ for name, arr in rmse_ducb_all_stacked.items():
     rmse_var_ducb[name] = arr.var(dim=0)
 
 # --- CUMSUM ---
-cumsum_mean_lm = cumsum_lawnmower_all.mean(dim=0)
+cumsum_mean_lm = cumsum_lm_all.mean(dim=0)
 cumsum_mean_rl = cumsum_rl_all.mean(dim=0)
 cumsum_mean_ducb = {}  # name → (T,)
 for name, arr in cumsum_ducb_all_stacked.items():
     cumsum_mean_ducb[name] = arr.mean(dim=0)
 
-cumsum_var_lm = cumsum_lawnmower_all.var(dim=0)
+cumsum_var_lm = cumsum_lm_all.var(dim=0)
 cumsum_var_rl = cumsum_rl_all.var(dim=0)
 cumsum_var_ducb = {}  # name → (T,)
 for name, arr in cumsum_ducb_all_stacked.items():
@@ -526,10 +527,10 @@ for name, arr in cumsum_ducb_all_stacked.items():
 # gpt_ard32.plot_rmse_and_cumsum_panels(rmse_lawnmower_all, rmse_ducb_all, rmse_rl_all,
 #                                 cumsum_lawnmower_all, cumsum_ducb_all, cumsum_rl_all,
 #                                 gp_iterator)
-gpt_ard32.plot_cumsum_with_variance_multi_ducb(c_lawn=cumsum_lawnmower_all,
+gpt_ard32.plot_cumsum_with_variance_multi_ducb(c_lawn=cumsum_lm_all,
                           c_ducb_dict=cumsum_ducb_all_stacked,
                           c_rl=cumsum_rl_all)
-gpt_ard32.plot_rmse_with_confidence_multi_ducb(rmse_lawn=rmse_lawnmower_all,            # (N_fields, K)
+gpt_ard32.plot_rmse_with_confidence_multi_ducb(rmse_lawn=rmse_lm_all,            # (N_fields, K)
                                                rmse_rl=rmse_rl_all,
                                                 rmse_ducb_dict=rmse_ducb_all_stacked,    # dict[name → (N_fields, K)]
                                                 sample_points=gp_iterator)
@@ -537,7 +538,7 @@ gpt_ard32.plot_rmse_with_confidence_multi_ducb(rmse_lawn=rmse_lawnmower_all,    
 # %%
 # Table view
 table_str = gpt_ard32.build_rmse_table_latex(
-    rmse_lawnmower_all,
+    rmse_lm_all,
     rmse_ducb_all_stacked,
     rmse_rl_all=rmse_rl_all,
     sample_points=gp_iterator,
