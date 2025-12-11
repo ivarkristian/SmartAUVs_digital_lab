@@ -957,7 +957,7 @@ def plot_sampling_comparison(
     plt.tight_layout()
     plt.show()
 
-def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl, rmse_ducb_dict, sample_points):
+def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict, sample_points, mode='mean'):
     """
     Plot RMSE mean ± 95% CI for Lawn mower and multiple DUCB agents.
 
@@ -973,7 +973,13 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl, rmse_ducb_dict, sam
 
     # Convert lawnmower
     L = rmse_lawn.cpu().numpy()
-    R = rmse_rl.cpu().numpy()
+    #R = rmse_rl.cpu().numpy()
+
+    # Convert RLs
+    rl_np = {
+        name: arr.cpu().numpy()
+        for name, arr in rmse_rl_dict.items()
+    }
 
     # Convert DUCBs
     ducb_np = {
@@ -983,8 +989,12 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl, rmse_ducb_dict, sam
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=300)
 
-    def add_curve(data, label, color, ls, alpha_fill=0.18):
-        mean = data.mean(axis=0)
+    def add_curve(data, label, color, ls, alpha_fill=0.18, mode='mean'):
+        if mode == 'mean':
+            mean = data.mean(axis=0)
+        else:
+            mean = np.median(data, axis=0)
+
         std  = data.std(axis=0)
 
         ci_low  = mean - 1.96 * std / np.sqrt(data.shape[0])
@@ -992,12 +1002,23 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl, rmse_ducb_dict, sam
 
         ax.plot(sample_points, mean, label=label,
                 color=color, linestyle=ls, lw=2)
-        ax.fill_between(sample_points, ci_low, ci_high,
-                        color=color, alpha=alpha_fill)
+        #ax.fill_between(sample_points, ci_low, ci_high, color=color, alpha=alpha_fill)
 
     # --- Lawn mower (reference) ---
-    add_curve(L, "Lawnmower", "#1f77b4", "-")  # blue, solid
-    add_curve(R, "RL", "black", "--")
+    add_curve(L, "Lawnmower", "#1f77b4", "-", mode=mode)  # blue, solid
+    #add_curve(R, "RL", "black", "--", mode=mode)
+    # --- RL agents ---
+    # Define a small set of grayscale-friendly styles to cycle through
+    rl_colors = ["#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2"]
+    rl_lstyles = ["--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2))]
+
+    rl_names_sorted = sorted(rl_np.keys())  # stable order
+
+    for i, name in enumerate(rl_names_sorted):
+        data = rl_np[name]
+        color = rl_colors[i % len(rl_colors)]
+        ls    = rl_lstyles[i % len(rl_lstyles)]
+        add_curve(data, name, color, ls, mode=mode)
 
     # --- DUCB agents ---
     # Define a small set of grayscale-friendly styles to cycle through
@@ -1010,7 +1031,7 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl, rmse_ducb_dict, sam
         data = ducb_np[name]
         color = ducb_colors[i % len(ducb_colors)]
         ls    = ducb_lstyles[i % len(ducb_lstyles)]
-        add_curve(data, name, color, ls)
+        add_curve(data, name, color, ls, mode=mode)
 
     ax.set_xlabel("Number of Samples")
     ax.set_ylabel("RMSE")
@@ -1057,7 +1078,7 @@ def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
     plt.tight_layout()
     plt.show()
 
-def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl):
+def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict):
     """
     Plot cumulative detections with mean ± std bands.
 
@@ -1073,7 +1094,8 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl):
 
     # --- Convert to numpy ---
     L = c_lawn.cpu().numpy()
-    R = c_rl.cpu().numpy()
+    #R = c_rl.cpu().numpy()
+    R_dict = {name: arr.cpu().numpy() for name, arr in c_rl_dict.items()}
     D_dict = {name: arr.cpu().numpy() for name, arr in c_ducb_dict.items()}
 
     T = L.shape[1]
@@ -1098,7 +1120,15 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl):
     # --- Lawn mower (reference) ---
     add_curve(L, "Lawnmower", "#1f77b4", "-")   # blue, solid
     # --- RL (as before) ---
-    add_curve(R, "RL", "black", "--")         # black, dashed
+    #add_curve(R, "RL", "black", "--")         # black, dashed
+    # --- RL variants ---
+    rl_colors  = ["#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2"]
+    rl_lstyles = ["--", ":", "-.", (0, (3, 1, 1, 1)), (0, (5, 2))]
+    for i, name in enumerate(sorted(R_dict.keys())):
+        data  = R_dict[name]
+        color = rl_colors[i % len(rl_colors)]
+        ls    = rl_lstyles[i % len(rl_lstyles)]
+        add_curve(data, name, color, ls)
 
     # --- DUCB variants ---
     ducb_colors  = ["#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2"]
@@ -1213,10 +1243,11 @@ def plot_rmse_and_cumsum_panels(rmse_lawn, rmse_du, rmse_rl,
 def build_rmse_table_latex(
     rmse_lawnmower_all,
     rmse_ducb_all_stacked,   # dict: name -> tensor (N_runs, K)
-    rmse_rl_all=None,        # optional: tensor (N_runs, K)
+    rmse_rl_all_stacked=None,        # optional: tensor (N_runs, K)
     sample_points=None,
     ci_level=1.96,           # 95% CI by default
-    decimals=3
+    decimals=3,
+    mode='mean'
 ):
     """
     Build a LaTeX table with RMSE mean ± CI for all agents.
@@ -1241,9 +1272,13 @@ def build_rmse_table_latex(
         A LaTeX tabular environment as a string.
     """
 
-    def stats_from_tensor(t: torch.Tensor):
+    def stats_from_tensor(t: torch.Tensor, mode='mean'):
         t = t.float()
-        mean = t.mean(dim=0).cpu().numpy()
+        if mode == 'mean':
+            mean = t.mean(dim=0).cpu().numpy()
+        else:
+            mean = torch.median(t, dim=0).values.cpu().numpy()
+
         std  = t.std(dim=0, unbiased=True).cpu().numpy()
         n    = t.shape[0]
         ci   = ci_level * std / np.sqrt(n)
@@ -1255,9 +1290,12 @@ def build_rmse_table_latex(
     mean_lm, ci_lm = stats_from_tensor(rmse_lawnmower_all)
     agent_stats["Lawnmower"] = (mean_lm, ci_lm)
 
-    if rmse_rl_all is not None:
-        mean_rl, ci_rl = stats_from_tensor(rmse_rl_all)
-        agent_stats["RL"] = (mean_rl, ci_rl)
+    #if rmse_rl_all is not None:
+    #    mean_rl, ci_rl = stats_from_tensor(rmse_rl_all)
+    #    agent_stats["RL"] = (mean_rl, ci_rl)
+    for name, arr in rmse_rl_all_stacked.items():
+        mean_rl, ci_rl = stats_from_tensor(arr)
+        agent_stats[name] = (mean_rl, ci_rl)
 
     for name, arr in rmse_ducb_all_stacked.items():
         mean_du, ci_du = stats_from_tensor(arr)

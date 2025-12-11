@@ -249,7 +249,7 @@ class adaptive_agents():
         super().__init__(*args, **kwargs)
         
         self.type = model_type
-        if self.type not in ['IG', 'UCB', 'DUCB']:
+        if self.type not in ['IG', 'UCB', 'DUCB', 'DUCB_beta']:
             print(f'Agent type {self.type} not recognized.')
         
         obs = obs[0]
@@ -269,12 +269,19 @@ class adaptive_agents():
         self.path_planner = dubins.Dubins(self.turn_radius-3, 1.0) #1.0 - sample every meter
         
         # tuning params
-        self.kappa = kappa or 1.0
-        self.gamma = gamma or 1.0
+        if kappa is None:
+            self.kappa = 1.0
+        else:
+            self.kappa = kappa
+        
+        if gamma is None:
+            self.gamma = -1.0
+        else:
+            self.gamma = gamma
 
         self.debug = debug
     
-    def get_wps_to_max_objective(self, obs):
+    def get_wps_to_max_objective(self, obs, n_samples=0):
         obs = obs[0]
 
         self.gas = obs['map'][0]
@@ -291,19 +298,19 @@ class adaptive_agents():
 
         # - Turn radius masks -
         # Find center of circles
-        pi = math.pi
-        a = pi*self.hdg.argmax()/4
-        rc_rot = a - pi/2
-        lc_rot = a + pi/2
-        rc_centre = (self.loc[0] + math.cos(rc_rot)*self.turn_radius, self.loc[1] + math.sin(rc_rot)*self.turn_radius)
-        lc_centre = (self.loc[0] + math.cos(lc_rot)*self.turn_radius, self.loc[1] + math.sin(lc_rot)*self.turn_radius)
+        #pi = math.pi
+        #a = pi*self.hdg.argmax()/4
+        #rc_rot = a - pi/2
+        #lc_rot = a + pi/2
+        #rc_centre = (self.loc[0] + math.cos(rc_rot)*self.turn_radius, self.loc[1] + math.sin(rc_rot)*self.turn_radius)
+        #lc_centre = (self.loc[0] + math.cos(lc_rot)*self.turn_radius, self.loc[1] + math.sin(lc_rot)*self.turn_radius)
 
         # Compute left and right masks and total turn radius mask
-        rc_mask = in_circle(self._coords, rc_centre[0], rc_centre[1], self.turn_radius)
-        lc_mask = in_circle(self._coords, lc_centre[0], lc_centre[1], self.turn_radius)
-        rc_dist = rc_mask*(self.dist - self.turn_radius*2)
-        lc_dist = lc_mask*(self.dist - self.turn_radius*2)
-        self.turn_radius_mask = rc_dist + lc_dist
+        #rc_mask = in_circle(self._coords, rc_centre[0], rc_centre[1], self.turn_radius)
+        #lc_mask = in_circle(self._coords, lc_centre[0], lc_centre[1], self.turn_radius)
+        #rc_dist = rc_mask*(self.dist - self.turn_radius*2)
+        #lc_dist = lc_mask*(self.dist - self.turn_radius*2)
+        #self.turn_radius_mask = rc_dist + lc_dist
 
         self.dubins_dist = dubins_arc_tangent_distance_lr(self.loc, self.hdg, self.turn_radius, self._coords)
 
@@ -311,20 +318,38 @@ class adaptive_agents():
             case 'IG':
                 # Highest entropy reduction, in practice go to location with max variance
                 # If multiple locations are tied, go to nearest
-                self.map = self.var + self.turn_radius_mask
+                self.map = self.var
 
             case 'UCB':
                 # Balances entropy reduction with sampling of high concentrations
                 # If multiple locations are tied, go to nearest
                 self.gas_scaled = np.clip(self.gas * self.kappa, 0, 255)
-                self.map = self.gas_scaled + self.var + self.turn_radius_mask
+                self.map = self.gas_scaled + self.var
 
             case 'DUCB':
                 # Balances entropy reduction with sampling of high concentrations
-                # and distance
+                # and Dubins distance
                 # If multiple locations are tied, go to nearest
-                self.gas_scaled = np.clip(self.gas * self.kappa, 0, 255)
-                self.map = self.gas_scaled + self.var + self.dubins_dist * self.gamma# + self.turn_radius_mask
+                self.var_scaled = self.var * self.kappa
+                self.dist_scaled = self.dubins_dist * self.gamma
+                self.map = self.gas + self.var_scaled + self.dist_scaled
+            
+            case 'DUCB_beta':
+                # Balances entropy reduction with sampling of high concentrations
+                # and distance, evolves beta parameter (kappa)
+                # If multiple locations are tied, go to nearest
+                # UCB_t(x)= u{t-1}(x) + sqrt{beta_t} * sigma_{t-1}(x)
+
+                # beta_t = 2*log(|D|*pi^2*t^2/(6*d))
+                # |D| = number of candidate points you consider
+	            # t = iteration (number of samples taken so far)
+	            # d ~ (0,1) = failure probability (e.g. 0.1, 0.05)
+                D = self._coord_x.shape[-1]*self._coord_y.shape[-1]
+                self.beta_t = 2*math.log(D*math.pi**2*n_samples**2/(6*self.kappa))
+ 
+                self.var_scaled = self.var * np.sqrt(self.beta_t)
+                self.dist_scaled = self.dubins_dist * self.gamma
+                self.map = self.gas + self.var_scaled + self.dist_scaled
 
             case _:
                 print(f'{self.type} agent not implemented')

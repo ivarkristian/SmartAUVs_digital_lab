@@ -43,7 +43,8 @@ env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100,
 #load_model = '1760001506_dunder_0_5689993' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 #load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 #load_model = '1761655432_dunder_0_10329902.zip' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-load_model = '1761655432_dunder_0_14219947' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+#load_model = '1761655432_dunder_0_14219947' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+load_model = '1761655432_dunder_1_14699929' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 models_dir = f"models"
 
 #agent = SAC.load(f"{models_dir}/{load_model}", env=env, device=env.device)

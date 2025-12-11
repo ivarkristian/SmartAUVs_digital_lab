@@ -353,6 +353,7 @@ class ScenarioBank:
 
         return env_xy, values
 
+# %%
 if __name__ == '__main__':
     # Initialize bank object
     bank = ScenarioBank(data_dir='../my_data_dir/')
@@ -372,3 +373,5 @@ if __name__ == '__main__':
     # Load from file
     bank.load_envs('tensor_envs/my_file.pt')
 
+
+# %%
