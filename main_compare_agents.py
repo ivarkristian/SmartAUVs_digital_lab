@@ -142,7 +142,7 @@ sample_coords_xy = [row[:2] for row in plain_sample_coords_times_list]
 # Setup adaptive sampling agent
 adaptive_channels = np.array([1, 1, 0, 1, 1])
 kappas = [255/20]#[255/15.0, 255/20.0, 255/25.0]
-gammas = [-1.0]
+gammas = [-0.5, -1.0]
 ducb_names = []
 for kappa in kappas:
     for gamma in gammas:
@@ -161,8 +161,8 @@ env_rl_main = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resoluti
 #load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 #load_model = '1761655432_dunder_0_10329902.zip'
 #load_model = '1761655432_dunder_0_14219947' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-load_models = ['1761655432_dunder_0_14219947', '1761655432_dunder_1_14699929'] # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-rl_names = ['0_14219947', '1_14699929']
+load_models = ['1761655432_dunder_0_1009963', '1761655432_dunder_0_10009907', '1761655432_dunder_1_259932', '1761655432_dunder_1_10299941', '1761655432_dunder_1_14699929'] # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+rl_names = ['1M', '10M', '20M', '30M', '35M']
 models_dir = f"models"
 
 #agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
@@ -183,6 +183,7 @@ n_steps = len(gp_iterator)
 
 # %%
 # Start loop here
+iterations = 50
 rmse_lawnmower = torch.zeros(n_steps)
 rmse_ducb = torch.zeros(n_steps)
 rmse_rl = torch.zeros(n_steps)
@@ -206,7 +207,7 @@ cumsum_rl_all = {name: [] for name in rl_names}
 # %%
 i = 0
 print('Running..')
-while i < 3:
+while i < iterations:
     print(f'Scenario {i}...')
     
     # Sample a scenario
@@ -378,18 +379,6 @@ while i < 3:
         obs_x=250, obs_y=250,
         title="Sampling strategies vs true field",
     )
-
-    # gpt_ard32.plot_sampling_comparison_lognorm_gridspec(
-    #     env_xy=env_xy,
-    #     values=values,
-    #     measurement_coords_lawnmower=measurement_coords_lawnmower,
-    #     measurements_lawnmower=measurements_lawnmower,
-    #     ducb_coords=measurement_coords_ducb,
-    #     ducb_vals=measurements_ducb,
-    #     rl_coords=measurement_coords_rl,
-    #     rl_vals=measurements_rl,
-    #     obs_x=250, obs_y=250
-    # )
     
     # Comparison statistics
     # -------------------------------
@@ -483,30 +472,6 @@ while i < 3:
     #detect_rl = (meas_rl_t > threshold).int()
     #c_rl = torch.cumsum(detect_rl, dim=0)
     #cumsum_rl_all_list.append(padded)
-
-    #   2. ACCUMULATE GAS-DETECTION STATS
-    # -------------------------------
-    # Lawnmower (fixed length):
-    # c_lawn = torch.cumsum((measurements_lawnmower > threshold).int(), dim=0)
-    # cumsum_lawnmower_all.append(c_lawn)
-
-    # # DUCB (fixed length):
-    # c_du = torch.cumsum((measurements_ducb > threshold).int(), dim=0)
-    # cumsum_ducb_all.append(c_du)
-
-    # # RL (variable length):
-    # L = measurements_rl.shape[0]
-    # detect_rl = (measurements_rl > threshold).int()
-    # c_rl = torch.cumsum(detect_rl, dim=0)
-
-    # # Pad to full length n_samples_lim by holding the last value
-    # if L < n_samples_lim:
-    #     pad_val = c_rl[-1].item()
-    #     padded = torch.cat([c_rl, pad_val * torch.ones(n_samples_lim - L, dtype=torch.int)])
-    # else:
-    #     padded = c_rl[:n_samples_lim]
-
-    # cumsum_rl_all.append(padded)
 
     i += 1
 
@@ -602,17 +567,12 @@ results_to_save = {
     "ducb_agent_names": list(rmse_ducb_all_stacked.keys())
 }
 
-fname = f"results_{i}_runs_sc1C_{time.ctime}.pt"
+fname = f"results_{i}_runs_sc1C_{time.ctime()}.pt"
 torch.save(results_to_save, fname)
 print(f"{fname}")
 
 # %%
 # Plotting
-#gpt_ard32.plot_rmse_with_confidence(rmse_lawnmower_all, rmse_ducb_all, rmse_rl_all, gp_iterator)
-# gpt_ard32.plot_cumsum_with_variance(cumsum_lawnmower_all, cumsum_ducb_all, cumsum_rl_all)
-# gpt_ard32.plot_rmse_and_cumsum_panels(rmse_lawnmower_all, rmse_ducb_all, rmse_rl_all,
-#                                 cumsum_lawnmower_all, cumsum_ducb_all, cumsum_rl_all,
-#                                 gp_iterator)
 gpt_ard32.plot_cumsum_with_variance_multi_ducb(c_lawn=cumsum_lm_all,
                           c_ducb_dict=cumsum_ducb_all_stacked,
                           c_rl_dict=cumsum_rl_all_stacked)
@@ -621,7 +581,6 @@ gpt_ard32.plot_rmse_with_confidence_multi_ducb(rmse_lawn=rmse_lm_all,           
                                                 rmse_ducb_dict=rmse_ducb_all_stacked,    # dict[name → (N_fields, K)]
                                                 sample_points=gp_iterator,
                                                 mode='median')
-
 # %%
 # Table view
 table_str = gpt_ard32.build_rmse_table_latex(

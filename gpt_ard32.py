@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.gridspec as gridspec
+from gpytorch.utils.errors import NotPSDError
 
 class RotatedMaternARD(gpytorch.kernels.Kernel):
     """
@@ -160,17 +161,23 @@ def build_base_model(angle_deg, ell_par, ell_perp, outputscale, mean_value: floa
     likelihood.eval()
     return model, likelihood
 
+
 @torch.no_grad()
 def score_subset_with_swap(model, likelihood, Xk, yk, Xtest, ytrue):
-    """
-    Set (Xk, yk) as the training data of `model` and evaluate RMSE + NLL on Xtest.
-    This is simpler and more robust than get_fantasy_model for your comparison.
-    """
     model.set_train_data(inputs=Xk, targets=yk, strict=False)
     model.eval(); likelihood.eval()
 
-    with gpytorch.settings.fast_pred_var():
-        pred = likelihood(model(Xtest))
+    try:
+        with gpytorch.settings.fast_pred_var(False), gpytorch.settings.cholesky_jitter(1e-2):
+            pred = likelihood(model(Xtest))
+    except NotPSDError:
+        # Fallback: you decide what makes sense here.
+        # For a search over subsets, you might return "bad" scores so this subset is discarded.
+        rmse = float("inf")
+        nll = float("inf")
+        mu = torch.full_like(ytrue, float("nan"))
+        var = torch.full_like(ytrue, float("nan"))
+        return rmse, nll, mu, var
 
     mu, var = pred.mean, pred.variance
     rmse = torch.sqrt(torch.mean((mu - ytrue)**2)).item()
