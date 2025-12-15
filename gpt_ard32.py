@@ -1046,6 +1046,7 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict
     ax.grid(alpha=0.3)
     ax.legend(frameon=False, fontsize=9)
     plt.tight_layout()
+    fig.savefig('figures_p3/' + f'rmse_{mode}.eps', format='eps', dpi=300)
     plt.show()
 
 def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
@@ -1085,7 +1086,7 @@ def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
     plt.tight_layout()
     plt.show()
 
-def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict):
+def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict, ci=True):
     """
     Plot cumulative detections with mean ± std bands.
 
@@ -1110,22 +1111,23 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict):
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
 
-    def add_curve(data, label, color, ls, alpha_fill=0.18):
+    def add_curve(data, label, color, ls, ci=True, alpha_fill=0.18):
         mean = data.mean(axis=0)
-        var  = data.var(axis=0)
-        std  = np.sqrt(var)
 
         ax.plot(x, mean, label=label, color=color, linestyle=ls, lw=2)
-        ax.fill_between(
-            x,
-            mean - std,
-            mean + std,
-            color=color,
-            alpha=alpha_fill
-        )
+        if ci:
+            var  = data.var(axis=0)
+            std  = np.sqrt(var)
+            ax.fill_between(
+                x,
+                mean - std,
+                mean + std,
+                color=color,
+                alpha=alpha_fill
+            )
 
     # --- Lawn mower (reference) ---
-    add_curve(L, "Lawnmower", "#1f77b4", "-")   # blue, solid
+    add_curve(L, "Lawnmower", "#1f77b4", "-", ci)   # blue, solid
     # --- RL (as before) ---
     #add_curve(R, "RL", "black", "--")         # black, dashed
     # --- RL variants ---
@@ -1135,7 +1137,7 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict):
         data  = R_dict[name]
         color = rl_colors[i % len(rl_colors)]
         ls    = rl_lstyles[i % len(rl_lstyles)]
-        add_curve(data, name, color, ls)
+        add_curve(data, name, color, ls, ci)
 
     # --- DUCB variants ---
     ducb_colors  = ["#d62728", "#2ca02c", "#9467bd", "#8c564b", "#e377c2"]
@@ -1145,7 +1147,7 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict):
         data  = D_dict[name]
         color = ducb_colors[i % len(ducb_colors)]
         ls    = ducb_lstyles[i % len(ducb_lstyles)]
-        add_curve(data, name, color, ls)
+        add_curve(data, name, color, ls, ci)
 
     ax.set_xlabel("Sample Index")
     ax.set_ylabel("Cumulative detections (> threshold)")
@@ -1153,6 +1155,7 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict):
     ax.grid(alpha=0.3)
     ax.legend(frameon=False, fontsize=9)
     plt.tight_layout()
+    fig.savefig('figures_p3/' + 'det_performances.eps', format='eps', dpi=300)
     plt.show()
 
 def plot_cumsum_with_variance(c_lawn, c_du, c_rl):
