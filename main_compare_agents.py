@@ -568,7 +568,7 @@ results_to_save = {
 }
 
 fname = f"results_{i}_runs_sc1C_{time.ctime()}.pt"
-torch.save(results_to_save, fname)
+torch.save(results_to_save, 'figures/' + fname)
 print(f"{fname}")
 
 # %%
