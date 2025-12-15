@@ -964,7 +964,7 @@ def plot_sampling_comparison(
     plt.tight_layout()
     plt.show()
 
-def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict, sample_points, mode='mean'):
+def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict, sample_points, mode='mean', save_str=''):
     """
     Plot RMSE mean ± 95% CI for Lawn mower and multiple DUCB agents.
 
@@ -1046,7 +1046,7 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict
     ax.grid(alpha=0.3)
     ax.legend(frameon=False, fontsize=9)
     plt.tight_layout()
-    fig.savefig('figures_p3/' + f'rmse_{mode}.eps', format='eps', dpi=300)
+    fig.savefig('figures_p3/' + f'rmse_{mode}' + save_str + '.eps', format='eps', dpi=300)
     plt.show()
 
 def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
@@ -1086,7 +1086,7 @@ def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
     plt.tight_layout()
     plt.show()
 
-def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict, ci=True):
+def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict, ci=True, save_str=''):
     """
     Plot cumulative detections with mean ± std bands.
 
@@ -1155,7 +1155,7 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict, ci=True
     ax.grid(alpha=0.3)
     ax.legend(frameon=False, fontsize=9)
     plt.tight_layout()
-    fig.savefig('figures_p3/' + 'det_performances.eps', format='eps', dpi=300)
+    fig.savefig('figures_p3/' + 'det_performances' + save_str + '.eps', format='eps', dpi=300)
     plt.show()
 
 def plot_cumsum_with_variance(c_lawn, c_du, c_rl):
