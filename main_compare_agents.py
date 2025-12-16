@@ -141,8 +141,8 @@ sample_coords_xy = [row[:2] for row in plain_sample_coords_times_list]
 
 # Setup adaptive sampling agent
 adaptive_channels = np.array([1, 1, 0, 1, 1])
-kappas = [255/20]#[255/15.0, 255/20.0, 255/25.0]
-gammas = [-0.5, -1.0]
+kappas = [255/15.0, 255/20.0, 255/25.0, 255/30.0]
+gammas = [-0.6, -0.8, -1.0, -1.2]
 ducb_names = []
 for kappa in kappas:
     for gamma in gammas:
@@ -161,8 +161,10 @@ env_rl_main = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resoluti
 #load_model = '1760001506_dunder_0_12259909' # DQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 #load_model = '1761655432_dunder_0_10329902.zip'
 #load_model = '1761655432_dunder_0_14219947' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-load_models = ['1761655432_dunder_0_1009963', '1761655432_dunder_0_10009907', '1761655432_dunder_1_259932', '1761655432_dunder_1_10299941', '1761655432_dunder_1_14699929'] # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-rl_names = ['1M', '10M', '20M', '30M', '35M']
+#load_models = ['1761655432_dunder_0_1009963', '1761655432_dunder_0_10009907', '1761655432_dunder_1_259932', '1761655432_dunder_1_10299941', '1761655432_dunder_1_14699929'] # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
+#rl_names = ['1M', '10M', '20M', '30M', '35M']
+load_models = []
+rl_names = []
 models_dir = f"models"
 
 #agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
