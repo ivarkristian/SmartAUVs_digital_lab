@@ -608,9 +608,9 @@ def plot_sampling_comparison_n_plots(
     """
 
     # reshape grid
-    X = env_xy[:, 0].reshape(obs_y, obs_x)
-    Y = env_xy[:, 1].reshape(obs_y, obs_x)
-    Z_true = values.reshape(obs_y, obs_x)
+    X = env_xy[:, 0].reshape(obs_y, obs_x).cpu().numpy()
+    Y = env_xy[:, 1].reshape(obs_y, obs_x).cpu().numpy()
+    Z_true = values.reshape(obs_y, obs_x).cpu().numpy()
 
     # ---------------- LogNorm Scaling ---------------- #
     bg  = threshold

@@ -369,15 +369,17 @@ while i < iterations:
         )
 
     # PLOT sampling strategies
-    plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples)
+    plot_sampling_strategies = False
+    if plot_sampling_strategies:
+        plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples)
 
-    gpt_ard32.plot_sampling_comparison_n_plots(
-        env_xy, values,
-        plot_coords, plot_vals, plot_labels,
-        threshold=threshold,
-        obs_x=250, obs_y=250,
-        title="Sampling strategies vs true field",
-    )
+        gpt_ard32.plot_sampling_comparison_n_plots(
+            env_xy, values,
+            plot_coords, plot_vals, plot_labels,
+            threshold=threshold,
+            obs_x=250, obs_y=250,
+            title="Sampling strategies vs true field",
+        )
     
     # Comparison statistics
     # -------------------------------
