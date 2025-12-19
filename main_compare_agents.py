@@ -148,7 +148,7 @@ adaptive_channels = np.array([1, 1, 0, 1, 1])
 kappa_scale = 5.0/255
 kappa_scale_back = 1/kappa_scale
 #kappas = np.array([1.8]) * (5.0/255.0)
-kappas = np.array([0.2, 0.6, 1.0, 1.4, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 4.0]) * (5.0/255.0)
+kappas = np.array([0.2, 0.6, 1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 4.0]) * (5.0/255.0)
 gammas = np.array([0.0, -0.1, -0.25, -0.5, -1.0, -2.0]) * 0.1
 #gammas = np.array([-1.0]) * 0.1
 ducb_names = []
@@ -193,7 +193,7 @@ n_steps = len(gp_iterator)
 
 # %%
 # Start loop here
-iterations = 50
+iterations = 20
 rmse_lawnmower = torch.zeros(n_steps)
 rmse_ducb = torch.zeros(n_steps)
 rmse_rl = torch.zeros(n_steps)
@@ -558,11 +558,11 @@ print(f"{fname}")
 
 # %%
 # Load from file
-files_to_load = [
-    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt',
-    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt'
-    ]
-loaded = gpt_ard32.load_and_merge_results(files_to_load)
+#files_to_load = [
+#    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt',
+#    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt'
+#    ]
+#loaded = gpt_ard32.load_and_merge_results(files_to_load)
 
 # %%
 # Plotting

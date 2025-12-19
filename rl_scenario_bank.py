@@ -75,7 +75,7 @@ class ScenarioBank:
         cur_dir = np.atan2(v.mean(), u.mean())/np.pi*180.0
         cur_str = np.sqrt(u.mean()**2 + v.mean()**2)
 
-        metadata = {'parameter': parameter, 'depth': depth, 'time': str(self.dataset['time'].values[0]).split('T')[1].split('.')[0], 'cur_dir': cur_dir, 'cur_str': cur_str, 'data_file': self.data_file}
+        metadata = {'parameter': parameter, 'depth': depth, 'time': str(self.dataset['time'].values[time]).split('T')[1].split('.')[0], 'cur_dir': cur_dir, 'cur_str': cur_str, 'data_file': self.data_file}
         return env_xy, torch.tensor(values), metadata
     
     def add_env(self, parameter='pH', depth=67, time=1):
