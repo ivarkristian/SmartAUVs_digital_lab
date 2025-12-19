@@ -37,6 +37,7 @@ importlib.reload(rl_gas_survey_dubins_agent_env)
 importlib.reload(rl_gas_survey_dubins_env)
 importlib.reload(variograms)
 importlib.reload(gpt_ard32)
+importlib.reload(agents)
 
 # %%
 # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
@@ -44,8 +45,8 @@ device = None
 if device is None:
     if torch.cuda.is_available():
         device = torch.device("cuda")
-    #elif torch.backends.mps.is_available():
-    #    device = torch.device("mps")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
     else:
         device = torch.device("cpu")
     
@@ -57,11 +58,12 @@ gp_pred_resolution = [100, 100]
 # Setup scenario bank
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
-envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+#envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+envs_file = 'tensor_envs/2c_pCO2_112.pt'
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
-bank.gas_coverage_cutoff(cutoff_concentration=550, cutoff_percentage=6)
+#bank.gas_coverage_cutoff(cutoff_concentration=550, cutoff_percentage=6)
 
 # %%
 # Sample a scenario for init, with random rotation and offset
@@ -95,17 +97,18 @@ ell_par, ell_perp, sig_par, sig_perp, *rest = variograms.fit_and_plot_anisotropi
 
 base_model, lik = gpt_ard32.build_base_model(random_scenario['cur_dir'],
                                              ell_par, ell_perp, max(sig_par, sig_perp), z.mean(), nu=nu)
-threshold = 550 # gas plume threshold
+#threshold = 550 # gas plume threshold
+threshold = 405.0
 
 # %%
 # Setup lawnmower pattern, DUCB agent and RL agent
 # Setup lawnmower sampling (without knowing the flow direction)
 # Example simulation parameters
-sample_radius = 2.0
+sample_radius = 1.0
 line_spacing = 25
 speed = 1.0  # m/s
 data_var = 'pCO2'
-depth = 68
+depth = 112 #68
 start_time = '2020-01-01T02:10:00.000000000'
 sample_freq = 1.0  # Sample frequency in Hz (samples per second)
 
@@ -141,12 +144,17 @@ sample_coords_xy = [row[:2] for row in plain_sample_coords_times_list]
 
 # Setup adaptive sampling agent
 adaptive_channels = np.array([1, 1, 0, 1, 1])
-kappas = [255/15.0, 255/20.0, 255/25.0, 255/30.0]
-gammas = [-0.6, -0.8, -1.0, -1.2]
+#kappas = [255/15.0, 255/20.0, 255/25.0, 255/30.0]
+kappa_scale = 5.0/255
+kappa_scale_back = 1/kappa_scale
+#kappas = np.array([1.8]) * (5.0/255.0)
+kappas = np.array([0.2, 0.6, 1.0, 1.4, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 4.0]) * (5.0/255.0)
+gammas = np.array([0.0, -0.1, -0.25, -0.5, -1.0, -2.0]) * 0.1
+#gammas = np.array([-1.0]) * 0.1
 ducb_names = []
 for kappa in kappas:
     for gamma in gammas:
-        name = f"DUCB_k{kappa:.2f}_g{gamma:.1f}"
+        name = f"DUCB_k{kappa*(255.0/5.0):.2f}_g{gamma:.2f}"
         ducb_names.append(name)
 
 # init agent env class
@@ -230,12 +238,12 @@ while i < iterations:
     z = values.view(250, 250).detach().cpu().numpy()
     ell_par, ell_perp, sig_par, sig_perp, *rest = variograms.fit_and_plot_anisotropic_variogram(
     z, direction_deg=random_scenario['cur_dir'],   # e.g., 30.0
-    tol_deg=20.0,                    # angular tolerance for binning
+    tol_deg=10.0,                    # angular tolerance for binning
     nbins=50,
     kernel=kernel_type,                # "matern" or "rbf"
     nu=nu,
-    plot=True,
-    report=True
+    plot=False,
+    report=False
     )
 
     # Lawnmower sampling
@@ -336,10 +344,8 @@ while i < iterations:
             "Lawnmower": (
                 measurement_coords_lawnmower[:j],
                 measurements_lawnmower[:j],),
-#            "RL": (
-#                measurement_coords_rl[:j],
-#                measurements_rl[:j],),
         }
+
         # Add each RL model as its own strategy
         for name, coords_rl, vals_rl in zip(
             rl_names, measurement_coords_rl_list, measurements_rl_list):
@@ -349,35 +355,26 @@ while i < iterations:
         for name, coords_ducb, vals_ducb in zip(
             ducb_names, measurement_coords_ducb_list, measurements_ducb_list):
             strategy_samples[name] = (coords_ducb[:j], vals_ducb[:j])
-        
-        #strategy_samples = {
-        #    "Lawnmower": (measurement_coords_lawnmower[:j], measurements_lawnmower[:j]),
-        #    "DUCB":      (measurement_coords_ducb[:j], measurements_ducb[:j]),
-        #    "RL":        (measurement_coords_rl[:j], measurements_rl[:j]),
-        #}
 
         results_intermediate = gpt_ard32.evaluate_strategies_for_field_lognorm_gridspec(
             base_model, lik,
             obs_truth_coords, obs_truth_values,
             strategy_samples,
             results_intermediate,
-            obs_x=env_rl.obs_x,
-            obs_y=env_rl.obs_y,
+            threshold=threshold,
+            obs_x=env_rl_main.obs_x,
+            obs_y=env_rl_main.obs_y,
             make_plot=False,   # or False for batch runs
             title_prefix=f"GP predictions for depth {random_scenario['depth']}, t={random_scenario['time']*10} ({j} samples)"
         )
 
-    #strategy_samples = {
-    #        "Lawnmower": (measurement_coords_lawnmower[:n_samples_lim], measurements_lawnmower[:n_samples_lim]),
-    #        "DUCB":      (measurement_coords_ducb[:n_samples_lim], measurements_ducb[:n_samples_lim]),
-    #        "RL":        (measurement_coords_rl[:n_samples_lim], measurements_rl[:n_samples_lim]),
-    #    }
-    
+    # PLOT sampling strategies
     plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples)
 
     gpt_ard32.plot_sampling_comparison_n_plots(
         env_xy, values,
         plot_coords, plot_vals, plot_labels,
+        threshold=threshold,
         obs_x=250, obs_y=250,
         title="Sampling strategies vs true field",
     )
@@ -391,11 +388,6 @@ while i < iterations:
         dtype=torch.float32
     )
     rmse_lawnmower_all_list.append(rmse_lawn)
-    
-    #rmse_rl_v = torch.tensor(
-    #    results_intermediate["RL"]["rmse"],
-    #    dtype=torch.float32
-    #)
 
     # All RL variants
     for name in rl_names:
@@ -413,21 +405,10 @@ while i < iterations:
             dtype=torch.float32
         )
         rmse_ducb_all[name].append(rmse_du)
-    
-    #   1. ACCUMULATE RMSE PER FIELD
-    # -------------------------------
-    # rmse_lawn  = torch.tensor(results_intermediate["Lawnmower"]["rmse"], dtype=torch.float32)
-    # rmse_du    = torch.tensor(results_intermediate["DUCB"]["rmse"], dtype=torch.float32)
-    # rmse_rl_v  = torch.tensor(results_intermediate["RL"]["rmse"], dtype=torch.float32)
-
-    # rmse_lawnmower_all.append(rmse_lawn)
-    # rmse_ducb_all.append(rmse_du)
-    # rmse_rl_all.append(rmse_rl_v)
 
     # -------------------------------
     # 2. ACCUMULATE GAS-DETECTION STATS
     # -------------------------------
-    threshold = 550  # or whatever you use
 
     # Lawnmower (fixed length)
     c_lawn = torch.cumsum(
@@ -555,11 +536,11 @@ for name, arr in cumsum_ducb_all_stacked.items():
 # Save results
 results_to_save = {
     "rmse_lawnmower": rmse_lm_all,                  # (N_fields, 6)
-    "rmse_rl": rmse_rl_all_stacked,                         # (N_fields, 6)
+    "rmse_rl": rmse_rl_all_stacked,                 # dict[name → tensor(N_fields, 6)]
     "rmse_ducb": rmse_ducb_all_stacked,             # dict[name → tensor(N_fields, 6)]
 
     "cumsum_lawnmower": cumsum_lm_all,              # (N_fields, T)
-    "cumsum_rl": cumsum_rl_all_stacked,                     # (N_fields, T)
+    "cumsum_rl": cumsum_rl_all_stacked,             # dict[name → tensor(N_fields, T)]
     "cumsum_ducb": cumsum_ducb_all_stacked,         # dict[name → tensor(N_fields, T)]
 
     # Optional: metadata so results are traceable
@@ -572,6 +553,14 @@ results_to_save = {
 fname = f"results_{i}_runs_sc1C_{time.ctime()}.pt"
 torch.save(results_to_save, 'figures/' + fname)
 print(f"{fname}")
+
+# %%
+# Load from file
+files_to_load = [
+    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt',
+    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt'
+    ]
+loaded = gpt_ard32.load_and_merge_results(files_to_load)
 
 # %%
 # Plotting
@@ -596,6 +585,23 @@ table_str = gpt_ard32.build_rmse_table_latex(
 )
 
 print(table_str)
+
+# %%
+# Heatmap view
+Z, kappas_sorted, gammas_sorted = gpt_ard32.build_rmse_grid_from_names(
+    rmse_by_name=rmse_ducb_all_stacked,
+    kappas=kappas,
+    gammas=gammas,
+    mode='median'
+)
+
+gpt_ard32.plot_rmse_heatmap(
+    Z,
+    kappas_sorted*kappa_scale_back,
+    gammas_sorted,
+    title="DUCB RMSE across $(\\kappa, \\gamma)$",
+    savepath="figures_p3/ducb_rmse_heatmap.eps",
+)
 
 # %%
 # Print summary

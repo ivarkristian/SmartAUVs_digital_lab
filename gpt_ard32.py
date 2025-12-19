@@ -7,6 +7,9 @@ from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.gridspec as gridspec
 from gpytorch.utils.errors import NotPSDError
+from matplotlib.ticker import MaxNLocator
+from collections import defaultdict
+from typing import List
 
 class RotatedMaternARD(gpytorch.kernels.Kernel):
     """
@@ -181,7 +184,8 @@ def score_subset_with_swap(model, likelihood, Xk, yk, Xtest, ytrue):
 
     mu, var = pred.mean, pred.variance
     rmse = torch.sqrt(torch.mean((mu - ytrue)**2)).item()
-    nll = -pred.log_prob(ytrue).mean().item()
+    #nll = -pred.log_prob(ytrue).mean().item()
+    nll= 0
     return rmse, nll, mu, var
 
 def init_strategy_results(strategy_names):
@@ -202,6 +206,7 @@ def evaluate_strategies_for_field_lognorm_gridspec(
     Xtest, ytrue,
     strategy_samples,
     results,
+    threshold=550.0,
     obs_x=None, obs_y=None,
     make_plot=False,
     title_prefix="GP prediction"
@@ -299,7 +304,7 @@ def evaluate_strategies_for_field_lognorm_gridspec(
             ax.set_aspect("equal", adjustable="box")
             ax.tick_params(axis='both', labelsize=12)
         
-        bg = 550.0   # your background concentration (or median/mean)
+        bg = threshold   # your background concentration (or median/mean)
         eps = 1e-2   # small offset to avoid log(0)
 
         vmin = eps
@@ -576,6 +581,7 @@ def plot_sampling_comparison_n_plots(
     agent_coords_list,   # list of (N_i, 2) arrays
     agent_vals_list,     # list of (N_i,) arrays
     agent_labels,        # list of strings
+    threshold,
     obs_x, obs_y,
     cmap="viridis",
     title="Sampling strategies vs true field",
@@ -607,7 +613,7 @@ def plot_sampling_comparison_n_plots(
     Z_true = values.reshape(obs_y, obs_x)
 
     # ---------------- LogNorm Scaling ---------------- #
-    bg  = 550.0
+    bg  = threshold
     eps = 1e-2
 
     excess_true = np.clip(Z_true - bg + eps, eps, None)
@@ -1003,6 +1009,7 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict
             mean = np.median(data, axis=0)
 
         std  = data.std(axis=0)
+        print(f'{label}: {mean}')
 
         ci_low  = mean - 1.96 * std / np.sqrt(data.shape[0])
         ci_high = mean + 1.96 * std / np.sqrt(data.shape[0])
@@ -1287,7 +1294,7 @@ def build_rmse_table_latex(
         if mode == 'mean':
             mean = t.mean(dim=0).cpu().numpy()
         else:
-            mean = torch.median(t, dim=0).values.cpu().numpy()
+            mean = torch.quantile(t, q=0.5, dim=0).values.cpu().numpy()
 
         std  = t.std(dim=0, unbiased=True).cpu().numpy()
         n    = t.shape[0]
@@ -1297,18 +1304,18 @@ def build_rmse_table_latex(
     # ---- Collect all agents and stats ----
     agent_stats = {}  # name -> (mean, ci)
 
-    mean_lm, ci_lm = stats_from_tensor(rmse_lawnmower_all)
+    mean_lm, ci_lm = stats_from_tensor(rmse_lawnmower_all, mode=mode)
     agent_stats["Lawnmower"] = (mean_lm, ci_lm)
 
     #if rmse_rl_all is not None:
     #    mean_rl, ci_rl = stats_from_tensor(rmse_rl_all)
     #    agent_stats["RL"] = (mean_rl, ci_rl)
     for name, arr in rmse_rl_all_stacked.items():
-        mean_rl, ci_rl = stats_from_tensor(arr)
+        mean_rl, ci_rl = stats_from_tensor(arr, mode=mode)
         agent_stats[name] = (mean_rl, ci_rl)
 
     for name, arr in rmse_ducb_all_stacked.items():
-        mean_du, ci_du = stats_from_tensor(arr)
+        mean_du, ci_du = stats_from_tensor(arr, mode=mode)
         agent_stats[name] = (mean_du, ci_du)
 
     # ---- Determine best (lowest) mean per column ----
@@ -1366,3 +1373,245 @@ def build_rmse_table_latex(
 
     latex_str = "\n".join(lines)
     return latex_str
+
+
+def build_rmse_grid_from_names(
+    rmse_by_name: dict,
+    kappas: np.ndarray,
+    gammas: np.ndarray,
+    *,
+    name_prefix: str = "DUCB",
+    kappa_scale_back: float = (255.0 / 5.0),
+    kappa_fmt: str = ".2f",
+    gamma_fmt: str = ".2f",
+    mode = 'mean'
+):
+    """
+    Build a 2D RMSE grid Z[gamma_idx, kappa_idx] from a name->RMSE dict.
+
+    Returns
+    -------
+    Z : np.ndarray, shape (len(gammas_sorted), len(kappas_sorted))
+        RMSE values (NaN if missing).
+    kappas_sorted : np.ndarray
+        Sorted kappas (x-axis).
+    gammas_sorted : np.ndarray
+        Sorted gammas (y-axis).
+    """
+    kappas = np.asarray(kappas, dtype=float)
+    gammas = np.asarray(gammas, dtype=float)
+
+    kappas_sorted = np.sort(kappas)
+    gammas_sorted = np.sort(gammas)
+
+    Z = np.full((len(gammas_sorted), len(kappas_sorted)), np.nan, dtype=float)
+
+    def make_name(k, g):
+        k_str = format(k * kappa_scale_back, kappa_fmt)
+        g_str = format(g, gamma_fmt)
+        return f"{name_prefix}_k{k_str}_g{g_str}"
+
+    for yi, g in enumerate(gammas_sorted):
+        for xi, k in enumerate(kappas_sorted):
+            name = make_name(k, g)
+            if name in rmse_by_name:
+                if mode == 'mean':
+                    Z[yi, xi] = float(rmse_by_name[name][:, 5].mean())
+                else:
+                    Z[yi, xi] = float(torch.quantile(rmse_by_name[name][:, 5], q=0.5))
+                    print(f'{name}: {Z[yi, xi]}')
+
+    return Z, kappas_sorted, gammas_sorted
+
+
+def plot_rmse_heatmap(
+    Z: np.ndarray,
+    kappas: np.ndarray,
+    gammas: np.ndarray,
+    *,
+    title: str | None = None,
+    xlabel: str = r"$\kappa$ (variance weight)",
+    ylabel: str = r"$\gamma$ (distance weight)",
+    cbar_label: str = "RMSE",
+    cmap: str = "viridis_r",
+    annotate: bool = True,
+    annot_fmt: str = "{:.3g}",
+    highlight_best: bool = False,
+    nan_color: str = "#EEEEEE",
+    figsize=(6.2, 4.8),
+    dpi: int = 200,
+    vmin=None,
+    vmax=None,
+    savepath: str | None = None,
+    show: bool = True,
+):
+    """
+    Plot a publication-quality heatmap of RMSE values.
+    """
+    plt.rcParams.update({
+        "font.size": 11,
+        "axes.labelsize": 12,
+        "axes.titlesize": 12,
+        "xtick.labelsize": 10.5,
+        "ytick.labelsize": 10.5,
+        "figure.dpi": dpi,
+        "savefig.dpi": 600,
+        "axes.linewidth": 0.8,
+    })
+
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+
+    cm = plt.get_cmap(cmap).copy()
+    cm.set_bad(color=nan_color)
+
+    im = ax.imshow(
+        Z,
+        origin="lower",
+        aspect="auto",
+        interpolation="nearest",
+        cmap=cm,
+        vmin=vmin,
+        vmax=vmax,
+    )
+
+    ax.set_xticks(np.arange(len(kappas)))
+    ax.set_yticks(np.arange(len(gammas)))
+    ax.set_xticklabels([f"{k:.3g}" for k in kappas])
+    ax.set_yticklabels([f"{g:.3g}" for g in gammas])
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if title:
+        ax.set_title(title)
+
+    # Subtle grid between cells (journal-friendly)
+    ax.set_xticks(np.arange(-0.5, len(kappas), 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(gammas), 1), minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.2)
+    ax.tick_params(which="minor", bottom=False, left=False)
+
+    cbar = fig.colorbar(im, ax=ax, pad=0.02)
+    cbar.set_label(cbar_label)
+    cbar.ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
+
+    if annotate:
+        for yi in range(Z.shape[0]):
+            for xi in range(Z.shape[1]):
+                val = Z[yi, xi]
+                if np.isfinite(val):
+                    ax.text(
+                        xi, yi,
+                        annot_fmt.format(val),
+                        ha="center", va="center",
+                        fontsize=10,
+                        color="black",
+                    )
+
+    if highlight_best and np.isfinite(Z).any():
+        by, bx = np.unravel_index(np.nanargmin(Z), Z.shape)
+        ax.scatter(
+            [bx], [by],
+            s=120, facecolors="none",
+            edgecolors="black", linewidths=2
+        )
+
+    if savepath:
+        fig.savefig(savepath, bbox_inches="tight", format='eps')
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, ax
+
+
+def load_and_merge_results(
+    filenames: List[str],
+    *,
+    device: str = "cpu",
+    strict_metadata: bool = True,
+):
+    """
+    Load multiple .pt result files and merge them into a single results dict.
+
+    Merging rule:
+    - tensors: concatenated along dim=0
+    - dict[name -> tensor]: concatenated per name along dim=0
+    - metadata: checked for consistency, then kept once
+
+    Parameters
+    ----------
+    filenames : list of str
+        Paths to .pt files saved via torch.save(results_dict).
+    device : str
+        Device to load tensors onto ("cpu" recommended).
+    strict_metadata : bool
+        If True, raises error if metadata differs across files.
+
+    Returns
+    -------
+    merged : dict
+        Merged results dictionary.
+    """
+    merged = {}
+    metadata_keys = {
+        "threshold",
+        "n_samples_lim",
+        "rl_agent_names",
+        "ducb_agent_names",
+    }
+
+    # Containers for accumulating tensors
+    tensor_accumulators = defaultdict(list)
+    dict_tensor_accumulators = defaultdict(lambda: defaultdict(list))
+    metadata_reference = {}
+
+    for fname in filenames:
+        data = torch.load(fname, map_location=device)
+
+        for key, value in data.items():
+
+            # --- metadata ---
+            if key in metadata_keys:
+                if key not in metadata_reference:
+                    metadata_reference[key] = value
+                elif strict_metadata and value != metadata_reference[key]:
+                    raise ValueError(
+                        f"Metadata mismatch for '{key}':\n"
+                        f"{metadata_reference[key]} vs {value}"
+                    )
+                continue
+
+            # --- plain tensors ---
+            if torch.is_tensor(value):
+                tensor_accumulators[key].append(value)
+
+            # --- dict[name -> tensor] ---
+            elif isinstance(value, dict):
+                for subkey, tensor in value.items():
+                    if not torch.is_tensor(tensor):
+                        raise TypeError(
+                            f"Expected tensor at {key}[{subkey}], got {type(tensor)}"
+                        )
+                    dict_tensor_accumulators[key][subkey].append(tensor)
+
+            else:
+                raise TypeError(
+                    f"Unsupported type for key '{key}': {type(value)}"
+                )
+
+    # --- finalize tensor merges ---
+    for key, tensor_list in tensor_accumulators.items():
+        merged[key] = torch.cat(tensor_list, dim=0)
+
+    # --- finalize dict[tensor] merges ---
+    for key, subdict in dict_tensor_accumulators.items():
+        merged[key] = {
+            subkey: torch.cat(tensor_list, dim=0)
+            for subkey, tensor_list in subdict.items()
+        }
+
+    # --- attach metadata ---
+    merged.update(metadata_reference)
+
+    return merged

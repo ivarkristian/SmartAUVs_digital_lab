@@ -485,9 +485,84 @@ class adaptive_agents():
         
         return best_value_idx
     
-    import numpy as np
 
-def _dubins_arc_tangent_one_circle(C, R, A, P_flat, forward_ccw: bool):
+def propagate_rightward_inside_mask(
+    dist: np.ndarray,
+    mask: np.ndarray,
+    *,
+    dx: float = 1.0,
+    keep_min: bool = False,
+    fill_value: float = np.nan,
+) -> np.ndarray:
+    """
+    Treat a masked region specially by propagating distances from the left edge
+    of each masked segment rightwards, adding propagation distance inside mask.
+
+    For each row y and each contiguous masked segment [xL..xR], define:
+        base = dist[y, xL]
+        new[y, x] = base + (x - xL)*dx    for x in [xL..xR]
+
+    Parameters
+    ----------
+    dist : (H, W) array
+        Existing scalar distance field.
+    mask : (H, W) bool array
+        True where special region (e.g., circle) is.
+    dx : float
+        Physical spacing per pixel in x-direction.
+    keep_min : bool
+        If True, inside-mask values become min(original, propagated).
+        If False, inside-mask values are overwritten by propagated.
+    fill_value : float
+        If dist has invalid values at the left edge (NaN/inf), this is used
+        as base to avoid crashing; propagated values then become fill_value too.
+
+    Returns
+    -------
+    out : (H, W) array
+        Updated distance field.
+    """
+    dist = np.asarray(dist)
+    mask = np.asarray(mask, dtype=bool)
+    if dist.ndim != 2 or mask.ndim != 2 or dist.shape != mask.shape:
+        print(f'dist: {dist.shape} mask: {mask.shape}')
+        raise ValueError("dist and mask must be 2D arrays of the same shape")
+
+    H, W = dist.shape
+    out = dist.copy()
+
+    # Process each row independently (perfect for a circular region)
+    for y in range(H):
+        row_mask = mask[y]
+        if not row_mask.any():
+            continue
+
+        xs = np.flatnonzero(row_mask)
+
+        # Split into contiguous segments (handles general masks too)
+        breaks = np.where(np.diff(xs) > 1)[0]
+        starts = np.r_[0, breaks + 1]
+        ends   = np.r_[breaks, len(xs) - 1]
+
+        for si, ei in zip(starts, ends):
+            xL = xs[si]
+            xR = xs[ei]
+
+            base = dist[y, xL]
+            if not np.isfinite(base):
+                base = fill_value
+
+            # Rightward propagation within this segment
+            ramp = base + (np.arange(xL, xR + 1) - xL) * dx
+
+            if keep_min:
+                out[y, xL:xR + 1] = np.minimum(out[y, xL:xR + 1], ramp)
+            else:
+                out[y, xL:xR + 1] = ramp
+
+    return out
+
+def _dubins_arc_tangent_one_circle(C, R, A, P_flat, original_shape, forward_ccw: bool):
     """
     Internal helper: compute arc+tangent+straight distance from A to every P
     using a single circle (center C, radius R) and a constrained arc direction.
@@ -514,7 +589,7 @@ def _dubins_arc_tangent_one_circle(C, R, A, P_flat, forward_ccw: bool):
     v = P_flat - C         # (N,2)
     d = np.linalg.norm(v, axis=1)  # (N,)
 
-    # Ensure targets are outside or just treat inside as just outside
+    # Ensure targets are outside or just treat inside as outside
     mask_inside = d <= R
     if np.any(mask_inside):
         d[mask_inside] = R + 1e-6
@@ -555,16 +630,19 @@ def _dubins_arc_tangent_one_circle(C, R, A, P_flat, forward_ccw: bool):
     L1 = s1 + l1
     L2 = s2 + l2
 
-    L1[mask_inside] = np.inf
-    L2[mask_inside] = np.inf
-
     # Take min over the two tangent solutions
     #L_opt = np.minimum(L1, L2)
     if forward_ccw:
-        return L2
+    #    L2[mask_inside] = np.inf
+    #    return L2
+        L2_prop = propagate_rightward_inside_mask(L2.reshape(original_shape), mask_inside.reshape(original_shape))
+        return L2_prop
     
-    return L1
-    #return L_opt
+    #L1[mask_inside] = np.inf
+    #return L1
+    L1_prop = propagate_rightward_inside_mask(L1.reshape(original_shape), mask_inside.reshape(original_shape))
+    return L1_prop
+    
     
 def dubins_arc_tangent_distance_lr(
     A,                # agent location (x,y)
@@ -622,13 +700,16 @@ def dubins_arc_tangent_distance_lr(
     C_right = A + R * n_right
 
     # --- Distances via left circle (CCW) and right circle (CW) ---
-    L_left  = _dubins_arc_tangent_one_circle(C_left,  R, A, P_flat, forward_ccw=True)
-    L_right = _dubins_arc_tangent_one_circle(C_right, R, A, P_flat, forward_ccw=False)
+    L_left  = _dubins_arc_tangent_one_circle(C_left,  R, A, P_flat, original_shape, forward_ccw=True)
+    L_right = _dubins_arc_tangent_one_circle(C_right, R, A, P_flat, original_shape, forward_ccw=False)
 
+    L_left = L_left.reshape(original_shape)
+    L_right = L_right.reshape(original_shape)
     # --- Take elementwise minimum ---
     L_opt = np.minimum(L_left, L_right)
 
-    return L_opt.reshape(original_shape)
+    return L_opt
+    #return L_opt.reshape(original_shape), L_left, L_right
 
 def plot_dubins_distance_contours(
     X, Y, dubins_dist, levels=15, cmap=None,
