@@ -200,7 +200,7 @@ class ScenarioBank:
         
         print(f"Could not plot dataset = {self.dataset}, parameter = {env['parameter']}")
     
-    def plot_above_threshold(self, threshold=None):
+    def plot_above_threshold(self, threshold=None, title_str='Environments'):
 
         if threshold is None:
             threshold = self.get_minmax()[0]
@@ -223,12 +223,12 @@ class ScenarioBank:
         ax = plt.gca()
         ax.tick_params(labelsize=16)
         plt.ylabel(f'% of locations > {threshold}', fontsize=16)
-        plt.xlabel(f'Environments in scenario 1', fontsize=16)
+        plt.xlabel(title_str, fontsize=16)
         #plt.title('Share of high-concentration locations', fontsize=12)
         plt.grid(axis='y', linestyle='--', alpha=0.5)
 
         plt.tight_layout()
-        fig.savefig(f"figures/percentage_above_{threshold}.eps", format="eps", dpi=300, bbox_inches="tight")
+        fig.savefig(f"figures/percentage_above_{threshold}_{title_str}.eps", format="eps", dpi=300, bbox_inches="tight")
         return fig
 
     def sample(self):
@@ -351,6 +351,146 @@ class ScenarioBank:
         env_xy[:, 1][env_xy[:, 1] < y_min] += y_max
 
         return env_xy, values
+    
+def plot_currents_in_dataset(bank, depths=[], times=[], save_prefix="currents"):
+
+    if not hasattr(bank, 'dataset'):
+        print('You have to load a dataset first')
+        return
+    
+    if not len(depths) or not len(times):
+        print(f'You have to give both depths and times')
+        return
+    
+    cur_dirs = []
+    cur_strs = []
+    timestamps = []
+    
+    for d in depths:
+        bank.environments = []
+        for t in times:
+            bank.add_env('pCO2', depth=d, time=t)
+        #bank.plot_above_threshold(405)
+        cur_dir_tmp = []
+        cur_str_tmp = []
+        for env in bank.environments:
+            cur_dir_tmp.append(env['cur_dir'])
+            cur_str_tmp.append(env['cur_str'])
+            if d is depths[0]:
+                timestamps.append(env['time'])
+        cur_dirs.append(np.array(cur_dir_tmp))
+        cur_strs.append(np.array(cur_str_tmp))
+    
+    plot_currents_by_depth(cur_dirs, cur_strs, depths, times=timestamps, save_prefix=save_prefix)
+    #plt.show()
+
+
+def plot_currents_by_depth(cur_dirs, cur_strs, depths, *, times=None,
+                        dir_units="deg", unwrap=True,
+                        figsize=(6.8, 3.2), dpi=300,
+                        save_prefix=None):
+    """
+    Create two paper-ready line plots:
+    1) Current direction vs time (one line per depth)
+    2) Current strength vs time (one line per depth)
+
+    Parameters
+    ----------
+    cur_dirs : list[np.ndarray]
+        List of 1D arrays with current direction for each depth.
+    cur_strs : list[np.ndarray]
+        List of 1D arrays with current strength for each depth.
+    depths : list[int|float]
+        Depth labels (same length as cur_dirs/cur_strs).
+    times : array-like or None
+        X-axis values. If None, uses np.arange(len(cur_dirs[0])).
+        If you want actual snapshot times, pass the same t values used when building the envs.
+    dir_units : {"deg","rad"}
+        Units of cur_dirs input.
+    unwrap : bool
+        If True, unwrap direction to avoid 0/360 jumps (recommended for line plots).
+    figsize : tuple
+        Figure size in inches.
+    dpi : int
+        Resolution for saving.
+    save_prefix : str or None
+        If provided, saves figures as f"{save_prefix}_cur_dir.png" and "_cur_str.png".
+
+    Returns
+    -------
+    fig_dir, ax_dir, fig_str, ax_str
+    """
+    if len(cur_dirs) != len(cur_strs) or len(cur_dirs) != len(depths):
+        raise ValueError("cur_dirs, cur_strs, and depths must have the same length")
+
+    # Ensure all series have same length
+    nT = len(cur_dirs[0])
+    for arr in cur_dirs + cur_strs:
+        if len(arr) != nT:
+            raise ValueError("All cur_dirs/cur_strs arrays must have the same length")
+
+    if times is None:
+        times = np.arange(nT)
+        time_label = "Snapshot index"
+    else:
+        times = np.asarray(times)
+        if len(times) != nT:
+            raise ValueError("times must have the same length as the direction/strength arrays")
+        time_label = "Time index"
+
+    # --------- Plot 1: Current direction ---------
+    fig_dir, ax_dir = plt.subplots(figsize=figsize, constrained_layout=True)
+
+    for d, cd in zip(depths, cur_dirs):
+        cd = np.asarray(cd).astype(float)
+
+        # Convert to radians for unwrap if needed
+        if dir_units == "deg":
+            cd_rad = np.deg2rad(cd)
+        elif dir_units == "rad":
+            cd_rad = cd
+        else:
+            raise ValueError("dir_units must be 'deg' or 'rad'")
+
+        if unwrap:
+            cd_rad = np.unwrap(cd_rad)
+
+        # Back to degrees for plotting (most readable)
+        cd_plot = np.rad2deg(cd_rad)
+
+        ax_dir.plot(times, cd_plot, linewidth=1.6, label=f"{d} m")
+
+    ax_dir.set_xticks(ax_dir.get_xticks()[::6])
+    ax_dir.set_xticklabels(ax_dir.get_xticklabels(), rotation=45)
+    ax_dir.set_xlabel(time_label)
+    ax_dir.set_ylabel("Current direction [deg]")
+    ax_dir.grid(True, which="both", linewidth=0.6, alpha=0.4)
+    ax_dir.legend(title="Depth", frameon=True, fontsize=8, title_fontsize=9, ncols=2)
+
+    # Optional: keep y-range sensible if you didn't unwrap
+    if not unwrap:
+        ax_dir.set_ylim(0, 360)
+
+    # --------- Plot 2: Current strength ---------
+    fig_str, ax_str = plt.subplots(figsize=figsize, constrained_layout=True)
+
+    for d, cs in zip(depths, cur_strs):
+        cs = np.asarray(cs).astype(float)
+        ax_str.plot(times, cs, linewidth=1.6, label=f"{d} m")
+
+    ax_str.set_xticks(ax_str.get_xticks()[::6])
+    ax_str.set_xticklabels(ax_str.get_xticklabels(), rotation=45)
+    ax_str.set_xlabel(time_label)
+    ax_str.set_ylabel("Current strength")
+    ax_str.grid(True, which="both", linewidth=0.6, alpha=0.4)
+    ax_str.legend(title="Depth", frameon=True, fontsize=8, title_fontsize=9, ncols=2)
+
+    # --------- Save (optional) ---------
+    if save_prefix is not None:
+        fig_dir.savefig(f"figures/{save_prefix}_cur_dir.png", dpi=dpi, bbox_inches="tight")
+        fig_str.savefig(f"figures/{save_prefix}_cur_str.png", dpi=dpi, bbox_inches="tight")
+
+    return fig_dir, ax_dir, fig_str, ax_str
 
 # %%
 if __name__ == '__main__':
