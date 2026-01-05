@@ -485,6 +485,91 @@ class adaptive_agents():
         
         return best_value_idx
     
+    def plot_acquisition_maps(self, sampled_xy=None, figsize=(10, 9), title=None,
+                              cmap="viridis", s=2, marker="o"):
+        """
+        Plot the components of the acquisition map in a 2x2 grid:
+          (1) gas
+          (2) var_scaled = var * kappa
+          (3) dist_scaled = dubins_dist * gamma
+          (4) map = gas + var_scaled + dist_scaled
+        Overlay sampled points on the final map.
+
+        Parameters
+        ----------
+        sampled_xy : list/array of (x, y)
+            Coordinates already sampled. Expected in same coordinate frame as self._coord_x/_coord_y.
+            If None or empty, no overlay is drawn.
+        figsize : tuple
+            Figure size passed to plt.figure.
+        title : str
+            Optional figure title.
+        cmap : str
+            Matplotlib colormap name.
+        s : float
+            Scatter marker size.
+        marker : str
+            Scatter marker style.
+        """
+        # --- Validate required arrays ---
+        required = ["gas", "var_scaled", "dist_scaled", "map"]
+        for name in required:
+            if not hasattr(self, name):
+                raise AttributeError(
+                    f"Missing attribute '{name}'. Ensure you computed it before plotting."
+                )
+
+        gas = np.asarray(self.gas)
+        var_scaled = np.asarray(self.var_scaled)
+        dist_scaled = np.asarray(self.dist_scaled)
+        amap = np.asarray(self.map)
+
+        # --- Determine axes extents (meters if coord grids exist, else pixel indices) ---
+        extent = None
+        x_label, y_label = "x index", "y index"
+
+        if hasattr(self, "_coord_x") and hasattr(self, "_coord_y"):
+            # In your code these are 2D grids; use their min/max to set extent
+            cx = np.asarray(self._coord_x)
+            cy = np.asarray(self._coord_y)
+            if cx.shape == gas.shape and cy.shape == gas.shape:
+                xmin, xmax = float(cx.min()), float(cx.max())
+                ymin, ymax = float(cy.min()), float(cy.max())
+                extent = [xmin, xmax, ymin, ymax]
+                x_label, y_label = "x [m]", "y [m]"
+
+        def _imshow(ax, arr, ttl):
+            im = ax.imshow(arr, origin="lower", extent=extent, cmap=cmap, aspect="equal")
+            ax.set_title(ttl)
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.ax.tick_params(labelsize=8)
+
+        fig, axes = plt.subplots(2, 2, figsize=figsize, constrained_layout=True)
+
+        _imshow(axes[0, 0], gas, "mean")
+        _imshow(axes[0, 1], var_scaled, r"var $\cdot \kappa$")
+        _imshow(axes[1, 0], dist_scaled, r"Dubins_dist $\cdot \gamma$")
+        _imshow(axes[1, 1], amap, r"A() = mean + var $\cdot \kappa$ + Dubins_dist $\cdot \gamma")
+
+        # --- Overlay sampled points on the final map panel ---
+        if sampled_xy is not None and len(sampled_xy) > 0:
+            pts = np.asarray(sampled_xy, dtype=float)
+            if pts.ndim != 2 or pts.shape[1] != 2:
+                raise ValueError("sampled_xy must be an array-like of shape (N, 2) with (x, y) pairs.")
+
+            ax = axes[1, 1]
+            ax.scatter(pts[:, 0], pts[:, 1], s=s, marker=marker,
+                       facecolors="none", edgecolors="white", linewidths=1.2,
+                       label="sampled")
+            ax.legend(loc="upper right", fontsize=8, frameon=True)
+
+        if title:
+            fig.suptitle(title, fontsize=12)
+
+        return fig, axes
+    
 
 def propagate_rightward_inside_mask(
     dist: np.ndarray,
@@ -562,7 +647,205 @@ def propagate_rightward_inside_mask(
 
     return out
 
-def _dubins_arc_tangent_one_circle(C, R, A, P_flat, original_shape, forward_ccw: bool):
+import numpy as np
+
+def propagate_along_heading_inside_mask(
+    dist: np.ndarray,
+    mask: np.ndarray,
+    heading_onehot: np.ndarray,
+    *,
+    dx: float = 1.0,
+    dy: float = 1.0,
+    keep_min: bool = False,
+    fill_value: float = np.nan,
+    heading4_mode: str = "E_N_W_S",  # alternative: "E_S_W_N"
+) -> np.ndarray:
+    """
+    Propagate distances inside a masked region along the vehicle heading direction.
+
+    For each scanline perpendicular to the heading, and each contiguous masked segment
+    on that scanline, define:
+        base = dist at the upstream edge cell of the segment
+        out[cell_i] = base + i * step_length
+
+    Supports 4- or 8-way one-hot headings.
+
+    Parameters
+    ----------
+    dist : (H, W) array
+        Existing scalar distance field.
+    mask : (H, W) bool array
+        True where special region is.
+    heading_onehot : (4,) or (8,) array-like
+        One-hot heading. For 8: index k => angle k*45deg (0=east).
+    dx, dy : float
+        Physical spacing per pixel in x and y.
+    keep_min : bool
+        If True: inside-mask values become min(original, propagated).
+        If False: inside-mask overwritten by propagated.
+    fill_value : float
+        Used if base is invalid (NaN/inf).
+
+    heading4_mode : str
+        Mapping for 4 headings. Choose:
+        - "E_N_W_S": indices [0,1,2,3] -> [E,N,W,S]
+        - "E_S_W_N": indices [0,1,2,3] -> [E,S,W,N]
+        Adjust if your 4-way onehot uses a different convention.
+
+    Returns
+    -------
+    out : (H, W) array
+        Updated distance field.
+    """
+    dist = np.asarray(dist)
+    mask = np.asarray(mask, dtype=bool)
+    heading_onehot = np.asarray(heading_onehot)
+
+    if dist.ndim != 2 or mask.ndim != 2 or dist.shape != mask.shape:
+        raise ValueError("dist and mask must be 2D arrays of the same shape")
+    if heading_onehot.ndim != 1 or heading_onehot.size not in (4, 8):
+        raise ValueError("heading_onehot must be a 1D one-hot vector of length 4 or 8")
+
+    H, W = dist.shape
+    out = dist.copy()
+
+    # ---- Decode heading to grid step (dy_idx, dx_idx) ----
+    k = int(heading_onehot.argmax())
+    if heading_onehot.size == 8:
+        # 0:E, 1:NE, 2:N, 3:NW, 4:W, 5:SW, 6:S, 7:SE  (matches angle = k*45deg)
+        dirs8 = [
+            (0,  1),  # E
+            (1, 1),  # NE
+            (1, 0),  # N
+            (1,-1),  # NW
+            (0, -1),  # W
+            (-1, -1),  # SW
+            (-1,  0),  # S
+            (-1,  1),  # SE
+        ]
+        dy_idx, dx_idx = dirs8[k]
+    else:
+        if heading4_mode == "E_N_W_S":
+            dirs4 = [
+                (0,  1),  # E
+                (-1, 0),  # N
+                (0, -1),  # W
+                (1,  0),  # S
+            ]
+        elif heading4_mode == "E_S_W_N":
+            dirs4 = [
+                (0,  1),  # E
+                (1,  0),  # S
+                (0, -1),  # W
+                (-1, 0),  # N
+            ]
+        else:
+            raise ValueError("heading4_mode must be 'E_N_W_S' or 'E_S_W_N'")
+        dy_idx, dx_idx = dirs4[k]
+
+    # Physical step length along travel direction
+    step = np.sqrt((dx_idx * dx) ** 2 + (dy_idx * dy) ** 2)
+
+    # Helper: apply ramp to a list of (y,x) indices describing a scanline in travel order
+    def _apply_on_line(line_y, line_x):
+        # line_y, line_x are 1D arrays of same length, ordered upstream->downstream
+        m = mask[line_y, line_x]
+        if not m.any():
+            return
+
+        idxs = np.flatnonzero(m)
+        # contiguous segments in this ordered line (adjacent indices differ by 1)
+        breaks = np.where(np.diff(idxs) > 1)[0]
+        starts = np.r_[0, breaks + 1]
+        ends   = np.r_[breaks, len(idxs) - 1]
+
+        for si, ei in zip(starts, ends):
+            seg = idxs[si:ei + 1]              # indices into the line
+            y0, x0 = line_y[seg[0]], line_x[seg[0]]  # upstream edge cell
+            base = dist[y0, x0]
+            if not np.isfinite(base):
+                base = fill_value
+
+            ramp = base + np.arange(seg.size) * step
+
+            yy = line_y[seg]
+            xx = line_x[seg]
+            if keep_min:
+                out[yy, xx] = np.minimum(out[yy, xx], ramp)
+            else:
+                out[yy, xx] = ramp
+
+    # ---- Axis-aligned cases ----
+    if (dy_idx, dx_idx) == (0, 1):   # E
+        for y in range(H):
+            _apply_on_line(np.full(W, y), np.arange(W))  # x increasing
+
+    elif (dy_idx, dx_idx) == (0, -1):  # W
+        for y in range(H):
+            _apply_on_line(np.full(W, y), np.arange(W - 1, -1, -1))  # x decreasing
+
+    elif (dy_idx, dx_idx) == (-1, 0):  # S (y decreasing)
+        for x in range(W):
+            _apply_on_line(np.arange(H - 1, -1, -1), np.full(H, x))  # y decreasing
+
+    elif (dy_idx, dx_idx) == (1, 0):   # N (y increasing)
+        for x in range(W):
+            _apply_on_line(np.arange(H), np.full(H, x))  # y increasing
+
+    # ---- Diagonal cases ----
+    else:
+        # Two families of diagonals:
+        #  - dx_idx == dy_idx  => constant (x - y)   (main diagonals)
+        #  - dx_idx != dy_idx  => constant (x + y)   (anti-diagonals)
+        if dx_idx == dy_idx:
+            # key = x - y ranges from -(H-1) .. (W-1)
+            for d in range(-(H - 1), W):
+                # points where x - y = d  => x = y + d
+                ys = []
+                xs = []
+                for y in range(H):
+                    x = y + d
+                    if 0 <= x < W:
+                        ys.append(y); xs.append(x)
+                if not ys:
+                    continue
+                ys = np.asarray(ys); xs = np.asarray(xs)
+
+                # Choose order upstream->downstream based on direction:
+                # NW: (-1,-1) travel to decreasing y (and x) => order y descending
+                # SE: ( 1, 1) travel to increasing y => order y ascending
+                if (dy_idx, dx_idx) == (-1, -1):  # NW
+                    order = np.argsort(-ys)
+                else:  # SE
+                    order = np.argsort(ys)
+                _apply_on_line(ys[order], xs[order])
+
+        else:
+            # key = x + y ranges from 0 .. (W-1)+(H-1)
+            for s in range(0, (W - 1) + (H - 1) + 1):
+                ys = []
+                xs = []
+                # x = s - y
+                for y in range(H):
+                    x = s - y
+                    if 0 <= x < W:
+                        ys.append(y); xs.append(x)
+                if not ys:
+                    continue
+                ys = np.asarray(ys); xs = np.asarray(xs)
+
+                # Choose order upstream->downstream:
+                # NE: (-1,+1) => x increasing (y decreasing) => sort by x ascending
+                # SW: (+1,-1) => x decreasing => sort by x descending
+                if (dy_idx, dx_idx) == (-1, 1):  # NE
+                    order = np.argsort(xs)
+                else:  # SW
+                    order = np.argsort(-xs)
+                _apply_on_line(ys[order], xs[order])
+
+    return out
+
+def _dubins_arc_tangent_one_circle(C, R, A, P_flat, original_shape, forward_ccw: bool, heading_onehot=[1, 0, 0, 0]):
     """
     Internal helper: compute arc+tangent+straight distance from A to every P
     using a single circle (center C, radius R) and a constrained arc direction.
@@ -635,12 +918,14 @@ def _dubins_arc_tangent_one_circle(C, R, A, P_flat, original_shape, forward_ccw:
     if forward_ccw:
     #    L2[mask_inside] = np.inf
     #    return L2
-        L2_prop = propagate_rightward_inside_mask(L2.reshape(original_shape), mask_inside.reshape(original_shape))
+        #L2_prop = propagate_rightward_inside_mask(L2.reshape(original_shape), mask_inside.reshape(original_shape))
+        L2_prop = propagate_along_heading_inside_mask(L2.reshape(original_shape), mask_inside.reshape(original_shape), heading_onehot=heading_onehot)
         return L2_prop
     
     #L1[mask_inside] = np.inf
     #return L1
-    L1_prop = propagate_rightward_inside_mask(L1.reshape(original_shape), mask_inside.reshape(original_shape))
+    #L1_prop = propagate_rightward_inside_mask(L1.reshape(original_shape), mask_inside.reshape(original_shape))
+    L1_prop = propagate_along_heading_inside_mask(L1.reshape(original_shape), mask_inside.reshape(original_shape), heading_onehot=heading_onehot)
     return L1_prop
     
     
@@ -700,8 +985,8 @@ def dubins_arc_tangent_distance_lr(
     C_right = A + R * n_right
 
     # --- Distances via left circle (CCW) and right circle (CW) ---
-    L_left  = _dubins_arc_tangent_one_circle(C_left,  R, A, P_flat, original_shape, forward_ccw=True)
-    L_right = _dubins_arc_tangent_one_circle(C_right, R, A, P_flat, original_shape, forward_ccw=False)
+    L_left  = _dubins_arc_tangent_one_circle(C_left,  R, A, P_flat, original_shape, forward_ccw=True, heading_onehot=heading_onehot)
+    L_right = _dubins_arc_tangent_one_circle(C_right, R, A, P_flat, original_shape, forward_ccw=False, heading_onehot=heading_onehot)
 
     L_left = L_left.reshape(original_shape)
     L_right = L_right.reshape(original_shape)

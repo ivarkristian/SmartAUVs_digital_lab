@@ -58,12 +58,15 @@ gp_pred_resolution = [100, 100]
 # Setup scenario bank
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
-#envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
-envs_file = 'tensor_envs/2c_pCO2_112.pt'
+envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+#envs_file = 'tensor_envs/2c_pCO2_112.pt'
+threshold = 550 # gas plume threshold
+#threshold = 405.0
+
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
-#bank.gas_coverage_cutoff(cutoff_concentration=550, cutoff_percentage=6)
+bank.gas_coverage_cutoff(cutoff_concentration=threshold, cutoff_percentage=6)
 
 # %%
 # Sample a scenario for init, with random rotation and offset
@@ -97,8 +100,6 @@ ell_par, ell_perp, sig_par, sig_perp, *rest = variograms.fit_and_plot_anisotropi
 
 base_model, lik = gpt_ard32.build_base_model(random_scenario['cur_dir'],
                                              ell_par, ell_perp, max(sig_par, sig_perp), z.mean(), nu=nu)
-#threshold = 550 # gas plume threshold
-threshold = 405.0
 
 # %%
 # Setup lawnmower pattern, DUCB agent and RL agent
@@ -148,7 +149,9 @@ adaptive_channels = np.array([1, 1, 0, 1, 1])
 kappa_scale = 5.0/255
 kappa_scale_back = 1/kappa_scale
 #kappas = np.array([1.8]) * (5.0/255.0)
-kappas = np.array([0.2, 0.6, 1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 4.0]) * (5.0/255.0)
+#kappas = np.array([0.2, 0.6, 1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 4.0]) * (5.0/255.0)
+#kappas = np.array([3.0, 4.0, 6.0, 8.0, 10.0]) * (5.0/255.0)
+kappas = np.array([12, 14, 16, 18]) * (5.0/255.0)
 gammas = np.array([0.0, -0.1, -0.25, -0.5, -1.0, -2.0]) * 0.1
 #gammas = np.array([-1.0]) * 0.1
 ducb_names = []
@@ -193,7 +196,7 @@ n_steps = len(gp_iterator)
 
 # %%
 # Start loop here
-iterations = 20
+iterations = 40
 rmse_lawnmower = torch.zeros(n_steps)
 rmse_ducb = torch.zeros(n_steps)
 rmse_rl = torch.zeros(n_steps)
@@ -275,6 +278,7 @@ while i < iterations:
 
             ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
             while env_ducb.sample_idx < n_samples_lim:
+                #fig = ducb_ag.plot_acquisition_maps(env_ducb.sampled_coords[:env_ducb.sample_idx], s=2)
                 ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(env_ducb.step(waypoints=ducb_wps, heading=ducb_hdg))
 
             measurements_ducb = env_ducb.sampled_vals[:n_samples_lim]
@@ -556,13 +560,13 @@ fname = f"results_{i}_runs_sc1C_{time.ctime()}.pt"
 torch.save(results_to_save, 'figures/' + fname)
 print(f"{fname}")
 
-# %%
+ # %%
 # Load from file
-#files_to_load = [
-#    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt',
-#    '/Users/ikw/code/SmartAUVs_digital_lab/figures/results_10_runs_sc1C_Wed Dec 17 15:43:45 2025.pt'
-#    ]
-#loaded = gpt_ard32.load_and_merge_results(files_to_load)
+files_to_load = [
+    'figures/results_20_runs_sc2C_Sat Dec 20 04:10:11 2025.pt',
+    'figures/results_20_runs_sc2C_Sat Dec 20 17:02:44 2025.pt'
+    ]
+loaded = gpt_ard32.load_and_merge_results(files_to_load)
 
 # %%
 # Plotting
@@ -606,21 +610,7 @@ gpt_ard32.plot_rmse_heatmap(
 )
 
 # %%
-# Print summary
-# for name in strategy_names:
-#     rmse_arr = np.array(results_intermediate[name]["rmse"])
-#     nll_arr  = np.array(results_intermediate[name]["nll"])
-#     print(f"\n{name}:")
-#     print(f"  RMSE: mean={rmse_arr.mean():.4f}, std={rmse_arr.std():.4f}")
-#     print(f"  NLL:  mean={nll_arr.mean():.4f}, std={nll_arr.std():.4f}")
+# ES comparison
 
-# %%
-# Plotting
-#env_rl.plot_env(x=env_xy[:, 0], y=env_xy[:, 1], c=values) # original env
-#env_rl.plot_env(x=measurement_coords_lawnmower[:, 0], y=measurement_coords_lawnmower[:, 1], c=measurements_lawnmower)
-#env_ducb.plot_env(x=env_ducb.sampled_coords[:, 0][:env_ducb.sample_idx], y=env_ducb.sampled_coords[:, 1][:env_ducb.sample_idx], c=env_ducb.sampled_vals[:env_ducb.sample_idx])
-#env_rl.plot_env(x=env_rl.sampled_coords[:, 0][:env_rl.sample_idx], y=env_rl.sampled_coords[:, 1][:env_rl.sample_idx], c=env_rl.sampled_vals[:env_rl.sample_idx])
-
-# %%
 
 # %%

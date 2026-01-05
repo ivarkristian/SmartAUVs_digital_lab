@@ -172,7 +172,7 @@ class ScenarioBank:
 
     def plot_env(self, env_num=0, title_postfix=None, path=None, x_range=[0, 250], y_range=[0, 250]):
         if len(self.environments) <= env_num:
-            print(f'Bank contains only {len(self.environments)}. Tried to plot #{env_num}')
+            print(f'Bank contains {len(self.environments)} environments (0-indexed). Tried to plot #{env_num}')
             return
         
         env = self.environments[env_num]

@@ -625,24 +625,26 @@ class GasSurveyDubinsAgentEnv(gym.Env):
         t = time.process_time()
         #self.mdl.set_train_data(
         #    inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
-        if len(self.mdl.train_targets) > 0 and new_model == False:
-            # not first prediction, use fantasy mdl
-            self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all).to(self.device)
-            self.sample_idx_mdl = self.sample_idx
-        else:
-            # first prediction must have train data
-            self.mdl.set_train_data(
-                inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
-            self.sample_idx_mdl = self.sample_idx
-            if self.debug:
-                self.mdl.print_named_parameters()
+        #if len(self.mdl.train_targets) > 0 and new_model == False:
+        #    # not first prediction, use fantasy mdl
+        #    with gpytorch.settings.fast_pred_var(False), gpytorch.settings.cholesky_jitter(1e-2):
+        #        self.mdl = self.mdl.get_fantasy_model(self.sampled_coords[self.sample_idx_mdl:self.sample_idx], self.sampled_vals[self.sample_idx_mdl:self.sample_idx]-self.mu_all).to(self.device)
+        #    self.sample_idx_mdl = self.sample_idx
+        #else:
+        
+        # first prediction must have train data
+        self.mdl.set_train_data(
+            inputs=self.sampled_coords[:self.sample_idx], targets=self.sampled_vals[:self.sample_idx]-self.mu_all, strict=False)
+        self.sample_idx_mdl = self.sample_idx
+        if self.debug:
+            self.mdl.print_named_parameters()
             
         if self.timer:
             print(f't3.1 step: {time.process_time()-t}')
 
         # Then predict
         t = time.process_time()
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        with torch.no_grad(), gpytorch.settings.fast_pred_var(), gpytorch.settings.cholesky_jitter(1e-2):
             #if use_self_mdl:
             current_pred = self.mdl(self._coords_flat)
             #else:

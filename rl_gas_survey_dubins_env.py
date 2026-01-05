@@ -840,7 +840,7 @@ class GasSurveyDubinsEnv(gym.Env):
 
         # Then predict
         t = time.process_time()
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        with torch.no_grad(), gpytorch.settings.fast_pred_var(), gpytorch.settings.cholesky_jitter(1e-2):
             current_pred = self.mdl(self._coords_flat)
 
         if self.timer:
