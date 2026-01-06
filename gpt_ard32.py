@@ -10,6 +10,7 @@ from gpytorch.utils.errors import NotPSDError
 from matplotlib.ticker import MaxNLocator
 from collections import defaultdict
 from typing import List
+from scipy.ndimage import distance_transform_edt
 
 class RotatedMaternARD(gpytorch.kernels.Kernel):
     """
@@ -164,9 +165,160 @@ def build_base_model(angle_deg, ell_par, ell_perp, outputscale, mean_value: floa
     likelihood.eval()
     return model, likelihood
 
+def distance_weighted_iou(true_mask: np.ndarray,
+                          pred_mask: np.ndarray,
+                          *,
+                          dx: float,
+                          dy: float,
+                          lam: float = 10.0,
+                          kernel: str = "exp") -> float:
+    true_mask = np.asarray(true_mask, dtype=bool)
+    pred_mask = np.asarray(pred_mask, dtype=bool)
+
+    # Both empty => perfect agreement
+    if true_mask.sum() == 0 and pred_mask.sum() == 0:
+        return 1.0
+
+    tp = np.logical_and(true_mask, pred_mask).sum()
+
+    # Distance to nearest set point (distance_transform_edt computes distance to nearest zero)
+    d_to_true = distance_transform_edt(~true_mask, sampling=(dy, dx))
+    d_to_pred = distance_transform_edt(~pred_mask, sampling=(dy, dx))
+
+    fp_mask = np.logical_and(pred_mask, ~true_mask)
+    fn_mask = np.logical_and(true_mask, ~pred_mask)
+
+    if kernel == "exp":
+        w_fp = np.exp(-d_to_true[fp_mask] / lam) if fp_mask.any() else np.array([])
+        w_fn = np.exp(-d_to_pred[fn_mask] / lam) if fn_mask.any() else np.array([])
+    elif kernel == "linear":
+        w_fp = np.maximum(0.0, 1.0 - d_to_true[fp_mask] / lam) if fp_mask.any() else np.array([])
+        w_fn = np.maximum(0.0, 1.0 - d_to_pred[fn_mask] / lam) if fn_mask.any() else np.array([])
+    else:
+        raise ValueError("kernel must be 'exp' or 'linear'")
+
+    soft_fp = float(w_fp.sum())
+    soft_fn = float(w_fn.sum())
+
+    denom = tp + soft_fp + soft_fn
+    return float(tp / denom) if denom > 0 else 1.0
+
 
 @torch.no_grad()
-def score_subset_with_swap(model, likelihood, Xk, yk, Xtest, ytrue):
+def exceedance_crps(mu: torch.Tensor,
+                    var: torch.Tensor,
+                    ytrue: torch.Tensor,
+                    *,
+                    thr: float,
+                    eps: float = 1e-12) -> float:
+    mu_f = mu.reshape(-1)
+    var_f = var.reshape(-1).clamp_min(eps)
+    sig = torch.sqrt(var_f)
+
+    z = (thr - mu_f) / sig
+    Phi = 0.5 * (1.0 + torch.erf(z / math.sqrt(2.0)))
+    p_exc = 1.0 - Phi  # P(Y >= thr)
+
+    o = (ytrue.reshape(-1) >= thr).to(p_exc.dtype)
+    return torch.mean((p_exc - o) ** 2).item()
+
+@torch.no_grad()
+def score_subset_with_swap(
+    model,
+    likelihood,
+    Xk,
+    yk,
+    Xtest,
+    ytrue,
+    *,
+    es_threshold: float,
+    grid_shape=(100, 100),
+    area_size_m=(250.0, 250.0),
+    lam_m: float = 10.0,          # distance weighting length-scale (meters)
+    kernel: str = "exp",
+):
+    """
+    Returns:
+      rmse, nll, mu, var,
+      correct_es, false_es, iou, f1,
+      iou_w, crps_exc
+    """
+    model.set_train_data(inputs=Xk, targets=yk, strict=False)
+    model.eval()
+    likelihood.eval()
+
+    try:
+        with gpytorch.settings.fast_pred_var(False), gpytorch.settings.cholesky_jitter(1e-2):
+            pred = likelihood(model(Xtest))
+    except NotPSDError:
+        rmse = float("inf")
+        nll = float("inf")
+        mu = torch.full_like(ytrue, float("nan"))
+        var = torch.full_like(ytrue, float("nan"))
+        correct_es = false_es = iou = f1 = 0.0
+        iou_w = 0.0
+        crps_exc = float("inf")
+        return rmse, nll, mu, var, correct_es, false_es, iou, f1, iou_w, crps_exc
+
+    mu, var = pred.mean, pred.variance
+
+    # Scalar score
+    rmse = torch.sqrt(torch.mean((mu - ytrue) ** 2)).item()
+    nll = 0.0  # keep as your current choice
+
+    thr = float(es_threshold)
+
+    # --- Binary ES metrics (vector form) ---
+    mu_f = mu.reshape(-1)
+    yt_f = ytrue.reshape(-1)
+
+    pred_pos = (mu_f >= thr)
+    true_pos = (yt_f >= thr)
+
+    tp = (pred_pos & true_pos).sum().item()
+    fp = (pred_pos & (~true_pos)).sum().item()
+    fn = ((~pred_pos) & true_pos).sum().item()
+
+    n_true_pos = true_pos.sum().item()
+    n_pred_pos = pred_pos.sum().item()
+
+    # correct_es (recall on true ES)
+    if n_true_pos > 0:
+        correct_es = tp / n_true_pos
+    else:
+        correct_es = 1.0 if n_pred_pos == 0 else 0.0
+
+    # false_es (false discovery rate on predicted ES)
+    if n_pred_pos > 0:
+        false_es = fp / n_pred_pos
+    else:
+        false_es = 0.0
+
+    # IoU and F1
+    den_iou = tp + fp + fn
+    iou = (tp / den_iou) if den_iou > 0 else 1.0
+    den_f1 = 2 * tp + fp + fn
+    f1 = (2 * tp / den_f1) if den_f1 > 0 else 1.0
+
+    # --- Distance-weighted IoU (grid form) ---
+    H, W = grid_shape
+    Ax, Ay = area_size_m
+    dx = Ax / W
+    dy = Ay / H
+
+    # Reshape into grid; assumes ytrue/mu correspond to the full grid in row-major order
+    true_mask = (yt_f.reshape(H, W).detach().cpu().numpy() >= thr)
+    pred_mask = (mu_f.reshape(H, W).detach().cpu().numpy() >= thr)
+
+    iou_w = distance_weighted_iou(true_mask, pred_mask, dx=dx, dy=dy, lam=lam_m, kernel=kernel)
+
+    # --- Exceedance CRPS (uncertainty-aware) ---
+    crps_exc = exceedance_crps(mu, var, ytrue, thr=thr)
+
+    return rmse, nll, mu, var, correct_es, false_es, iou, f1, iou_w, crps_exc
+
+@torch.no_grad()
+def score_subset_with_swap_old(model, likelihood, Xk, yk, Xtest, ytrue):
     model.set_train_data(inputs=Xk, targets=yk, strict=False)
     model.eval(); likelihood.eval()
 
@@ -188,17 +340,38 @@ def score_subset_with_swap(model, likelihood, Xk, yk, Xtest, ytrue):
     nll= 0
     return rmse, nll, mu, var
 
-def init_strategy_results(strategy_names):
+def init_strategy_results(strategy_names, metrics=None):
     """
     Create a results dict for multiple strategies.
-    Example keys: ["Lawnmower", "DUCB", "RL"]
+    Each metric is a list that will be appended to once per j in gp_iterator.
     """
-    return {
-        name: {
-            "rmse": [],
-            "nll": []
-        } for name in strategy_names
-    }
+    if metrics is None:
+        metrics = ["rmse", "nll"]
+
+    return {name: {m: [] for m in metrics} for name in strategy_names}
+
+def recover_results(path="figures/results_running_sc1b.pt", map_location="cpu"):
+    ckpt = torch.load(path, map_location=map_location)
+    gp_all = ckpt["gp_all"]
+    cumsum_all = ckpt["cumsum_all"]
+    succeeded = ckpt.get("succeeded", [])
+    failed = ckpt.get("failed", [])
+    return gp_all, cumsum_all, succeeded, failed
+
+def cumsum_above_threshold(meas, thr, T):
+    """
+    Compute cumulative count of samples above threshold, padded/truncated to length T.
+    This normalizes RL (variable-length) and others to a common length for comparisons.
+    """
+    meas_t = torch.as_tensor(meas)
+    cs = torch.cumsum((meas_t > thr).to(torch.int32), dim=0)
+    L = cs.shape[0]
+    if L == 0:
+        return torch.zeros(T, dtype=torch.float32)
+    if L >= T:
+        return cs[:T].to(torch.float32)
+    pad = cs[-1].repeat(T - L)
+    return torch.cat([cs, pad]).to(torch.float32)
 
 @torch.no_grad()
 def evaluate_strategies_for_field_lognorm_gridspec(
@@ -254,11 +427,19 @@ def evaluate_strategies_for_field_lognorm_gridspec(
     preds_mu = {}
 
     for name, (Xk, yk) in strategy_samples.items():
-        rmse, nll, mu, var = score_subset_with_swap(
-            base_model, likelihood, Xk, yk, Xtest, ytrue
+        scores = score_subset_with_swap(
+            base_model, likelihood, Xk, yk, Xtest, ytrue,
+            es_threshold=threshold
         )
+        (rmse, nll, mu, var, correct_es, false_es, iou, f1, iou_w, crps_exc) = scores
         results[name]["rmse"].append(rmse)
         results[name]["nll"].append(nll)
+        results[name]["correct_es"].append(correct_es)
+        results[name]["false_es"].append(false_es)
+        results[name]["iou"].append(iou)
+        results[name]["f1"].append(f1)
+        results[name]["iou_w"].append(iou_w)
+        results[name]["crps_exc"].append(crps_exc)
         preds_mu[name] = mu.detach().cpu().numpy()
 
     # ----------------------------------------------------------------------
@@ -1009,7 +1190,7 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict
             mean = np.median(data, axis=0)
 
         std  = data.std(axis=0)
-        print(f'{label}: {mean}')
+        #print(f'{label}: {mean}')
 
         ci_low  = mean - 1.96 * std / np.sqrt(data.shape[0])
         ci_high = mean + 1.96 * std / np.sqrt(data.shape[0])

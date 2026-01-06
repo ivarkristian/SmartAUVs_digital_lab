@@ -6,6 +6,9 @@
 # %%
 import importlib
 import random
+import os
+from datetime import datetime
+import traceback
 import torch
 import numpy as np
 from stable_baselines3 import DQN
@@ -59,9 +62,10 @@ gp_pred_resolution = [100, 100]
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
 envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+scenario = envs_file.split('/')[-1].split('.')[0]
 #envs_file = 'tensor_envs/2c_pCO2_112.pt'
 threshold = 550 # gas plume threshold
-#threshold = 405.0
+#threshold = 405
 
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
@@ -122,7 +126,7 @@ scenario_y_max = env_xy_np[:, 1].max()
 sc_len_x = scenario_x_max - scenario_x_min
 sc_len_y = scenario_y_max - scenario_y_min
 path_len = sc_len_x/2.0 * np.sqrt(2.0)
-#path_delta = (sc_len_x - path_len)/2.0
+
 path_delta = 10
 path_x_min = scenario_x_min + path_delta
 path_x_max = scenario_x_max - path_delta
@@ -148,11 +152,13 @@ adaptive_channels = np.array([1, 1, 0, 1, 1])
 #kappas = [255/15.0, 255/20.0, 255/25.0, 255/30.0]
 kappa_scale = 5.0/255
 kappa_scale_back = 1/kappa_scale
-#kappas = np.array([1.8]) * (5.0/255.0)
+#kappas = np.array([1]) * (5.0/255.0)
 #kappas = np.array([0.2, 0.6, 1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 4.0]) * (5.0/255.0)
-#kappas = np.array([3.0, 4.0, 6.0, 8.0, 10.0]) * (5.0/255.0)
-kappas = np.array([12, 14, 16, 18]) * (5.0/255.0)
-gammas = np.array([0.0, -0.1, -0.25, -0.5, -1.0, -2.0]) * 0.1
+kappas = np.array([0.5, 1, 2, 5, 10, 20, 50]) * (5.0/255.0)
+#kappas = np.array([12, 14, 16, 18]) * (5.0/255.0)
+#kappas = np.array([20, 22, 24, 50]) * (5.0/255.0)
+#kappas = np.array([30]) * (5.0/255.0)
+gammas = np.array([0.0, -0.05, -0.1, -0.2, -0.5])
 #gammas = np.array([-1.0]) * 0.1
 ducb_names = []
 for kappa in kappas:
@@ -176,7 +182,7 @@ env_rl_main = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resoluti
 #rl_names = ['1M', '10M', '20M', '30M', '35M']
 load_models = []
 rl_names = []
-models_dir = f"models"
+models_dir = "models"
 
 #agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
 
@@ -194,9 +200,20 @@ def stepped_array(n, m, s):
 gp_iterator = stepped_array(sample_start, n_samples_lim, sample_step)
 n_steps = len(gp_iterator)
 
+# --------------------------
+# Unified containers
+# --------------------------
+# All GP metrics (vectors over gp_iterator) are stored in gp_all[metric][strategy].
+# Cumsum (vectors over sampling index) are stored separately in cumsum_all[strategy].
+gp_metrics = ["rmse", "nll", "correct_es", "false_es", "iou", "f1", "iou_w", "crps_exc"]
+strategy_names = ["Lawnmower"] + rl_names + ducb_names
+
+gp_all = {m: {s: [] for s in strategy_names} for m in gp_metrics}
+cumsum_all = {s: [] for s in strategy_names}
+
 # %%
 # Start loop here
-iterations = 40
+iterations = 3
 rmse_lawnmower = torch.zeros(n_steps)
 rmse_ducb = torch.zeros(n_steps)
 rmse_rl = torch.zeros(n_steps)
@@ -208,360 +225,308 @@ cumsum_rl = torch.zeros(n_samples_lim)
 rmse_lawnmower_all_list = []
 rmse_ducb_all = {name: [] for name in ducb_names}
 rmse_rl_all = {name: [] for name in rl_names}
-#rmse_ducb_all = []
-#rmse_rl_all_list = []
 
 cumsum_lawnmower_all_list = []
 cumsum_ducb_all = {name: [] for name in ducb_names}
 cumsum_rl_all = {name: [] for name in rl_names}
-#cumsum_ducb_all = []
-#cumsum_rl_all_list = []
 
-# %%
-i = 0
-print('Running..')
+# ---- Single checkpoint filename (constant) ----
+# Put scenario count etc. in metadata inside the file; keep filename stable.
+ckpt_path = os.path.join("figures", f"results_running_{scenario}.pt")
+
+# ---- Initialize or resume ----
+if os.path.exists(ckpt_path):
+    print(f"[resume] Loading existing checkpoint: {ckpt_path}")
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+    gp_all = ckpt["gp_all"]               # dict[metric][strategy] -> list[tensor(len(gp_iterator))]
+    cumsum_all = ckpt["cumsum_all"]       # dict[strategy] -> list[tensor(n_samples_lim)]
+    succeeded = ckpt.get("succeeded", [])
+    failed = ckpt.get("failed", [])
+    #i = ckpt.get("i", 0)
+    i = len(succeeded)
+
+    # Continue from next index (or from i as stored)
+    # If you prefer to continue from len(succeeded), use: i = len(succeeded)
+    print(f"[resume] Continuing from iteration {i}. "
+          f"Succeeded: {len(succeeded)}, Failed: {len(failed)}")
+else:
+    print(f"[init] No checkpoint found. Starting new run: {ckpt_path}")
+    gp_all = {m: {s: [] for s in strategy_names} for m in gp_metrics}
+    cumsum_all = {s: [] for s in strategy_names}
+    succeeded, failed = [], []
+    i = 0
+
+def save_checkpoint():
+    """
+    Save raw lists (gp_all, cumsum_all) so we can always resume.
+    We also save metadata and bookkeeping. This overwrites the same file.
+    """
+    ckpt = {
+        # Raw, append-only storage:
+        # gp_all[metric][strategy] is a list over scenarios, each element is a tensor(len(gp_iterator)).
+        "gp_all": gp_all,
+        # cumsum_all[strategy] is a list over scenarios, each element is a tensor(n_samples_lim).
+        "cumsum_all": cumsum_all,
+
+        # Bookkeeping:
+        "i": i,
+        "succeeded": succeeded,
+        "failed": failed,
+
+        # Metadata for traceability:
+        "timestamp": datetime.now().isoformat(),
+        "threshold": threshold,
+        "n_samples_lim": n_samples_lim,
+        "gp_iterator": list(gp_iterator),
+        "gp_metrics": gp_metrics,
+        "strategy_names": strategy_names,
+        "rl_agent_names": list(rl_names),
+        "ducb_agent_names": list(ducb_names),
+        "grid_shape": tuple(gp_pred_resolution),
+        "area_size_m": (250.0, 250.0),
+    }
+    torch.save(ckpt, ckpt_path)
+    print(f"[checkpoint] Saved -> {ckpt_path} (iter={i}, ok={len(succeeded)}, fail={len(failed)})")
+
+print('Running loop...')
 while i < iterations:
-    print(f'Scenario {i}...')
+    print(f"\nScenario {i} of {iterations-1} ...")
     
-    # Sample a scenario
-    random_scenario = bank.sample()
-    rotation = random.choice([-90, 0, 90, 180])
+    try:
+        # ---------------------------------------------------------------------
+        # Everything inside one iteration goes inside try:
+        # If any step fails, we log and continue (without incrementing succeeded).
+        # ---------------------------------------------------------------------
 
-    env_xy = bank.rotate_xy(random_scenario['coords'].to(device), rotation)
-    values = random_scenario['values'].to(device)
-    random_scenario['cur_dir'] += rotation
+        # Sample a scenario
+        random_scenario = bank.sample()
+        rotation = random.choice([-90, 0, 90, 180])
 
-    env_xy, values = bank.offset_xy(env_xy, values, max_offset_factors)
+        env_xy = bank.rotate_xy(random_scenario['coords'].to(device), rotation)
+        values = random_scenario['values'].to(device)
+        random_scenario['cur_dir'] += rotation
 
-    # numpy versions
-    env_xy_np = env_xy.cpu().numpy()
-    env_vals_np = values.cpu().numpy()
+        env_xy, values = bank.offset_xy(env_xy, values, max_offset_factors)
 
-    # Find GP parameters from variogram
-    z = values.view(250, 250).detach().cpu().numpy()
-    ell_par, ell_perp, sig_par, sig_perp, *rest = variograms.fit_and_plot_anisotropic_variogram(
-    z, direction_deg=random_scenario['cur_dir'],   # e.g., 30.0
-    tol_deg=10.0,                    # angular tolerance for binning
-    nbins=50,
-    kernel=kernel_type,                # "matern" or "rbf"
-    nu=nu,
-    plot=False,
-    report=False
-    )
+        # numpy versions
+        env_xy_np = env_xy.cpu().numpy()
+        env_vals_np = values.cpu().numpy()
 
-    # Lawnmower sampling
-    measurements_lawnmower = []
-    measurement_coords_lawnmower = []
-    for coord in sample_coords_xy:
-        msr = chem_utils.extract_synoptic_chemical_data_from_depth(env_xy_np[:, 0], env_xy_np[:, 1], env_vals_np, coord, sample_radius)
-        measurements_lawnmower.append(msr)
-        measurement_coords_lawnmower.append(coord)
+        # Find GP parameters from variogram
+        z = values.view(250, 250).detach().cpu().numpy()
+        ell_par, ell_perp, sig_par, sig_perp, *rest = variograms.fit_and_plot_anisotropic_variogram(
+        z, direction_deg=random_scenario['cur_dir'],   # e.g., 30.0
+        tol_deg=10.0,                    # angular tolerance for binning
+        nbins=50,
+        kernel=kernel_type,                # "matern" or "rbf"
+        nu=nu,
+        plot=False,
+        report=False
+        )
 
-    measurements_lawnmower = torch.tensor(measurements_lawnmower, dtype=torch.float32)
-    measurement_coords_lawnmower = torch.tensor(measurement_coords_lawnmower, dtype=torch.float32)
+        # Lawnmower sampling
+        measurements_lawnmower = []
+        measurement_coords_lawnmower = []
+        for coord in sample_coords_xy:
+            msr = chem_utils.extract_synoptic_chemical_data_from_depth(env_xy_np[:, 0], env_xy_np[:, 1], env_vals_np, coord, sample_radius)
+            measurements_lawnmower.append(msr)
+            measurement_coords_lawnmower.append(coord)
 
-    # DUCB sampling
-    obs = env_ducb_main.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
-    ducb_init_loc = env_ducb_main.loc
-    ducb_init_hdg = env_ducb_main.heading
-    ducb_envs = []
-    ducb_ags = []
-    measurements_ducb_list = []
-    measurement_coords_ducb_list = []
+        measurements_lawnmower = torch.tensor(measurements_lawnmower, dtype=torch.float32)
+        measurement_coords_lawnmower = torch.tensor(measurement_coords_lawnmower, dtype=torch.float32)
 
-    for kappa in kappas:
-        for gamma in gammas:
-            env_ducb = copy.deepcopy(env_ducb_main)
-            #obs = env_ducb.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
+        # DUCB sampling (multiple kappas/gammas)
+        obs = env_ducb_main.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
+        ducb_init_loc = env_ducb_main.loc
+        ducb_init_hdg = env_ducb_main.heading
+        ducb_envs = []
+        ducb_ags = []
+        measurements_ducb_list = []
+        measurement_coords_ducb_list = []
+
+        for kappa in kappas:
+            for gamma in gammas:
+                env_ducb = copy.deepcopy(env_ducb_main)
+                ducb_ag = agents.adaptive_agents(model_type='DUCB', obs=obs, kappa=kappa, gamma=gamma, debug=False)
+
+                ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
+                while env_ducb.sample_idx < n_samples_lim:
+                    #fig = ducb_ag.plot_acquisition_maps(env_ducb.sampled_coords[:env_ducb.sample_idx], s=2)
+                    ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(env_ducb.step(waypoints=ducb_wps, heading=ducb_hdg))
+
+                measurements_ducb_list.append(env_ducb.sampled_vals[:n_samples_lim])
+                measurement_coords_ducb_list.append(env_ducb.sampled_coords[:n_samples_lim])
+                ducb_envs.append(env_ducb)
+                ducb_ags.append(ducb_ag)
+
+        # RL agent sampling
+        obs, _ = env_rl_main.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
+        env_rl_main.loc = ducb_init_loc
+        env_rl_main.heading = ducb_init_hdg
+        rl_envs = []
+        rl_ags = []
+        measurements_rl_list = []
+        measurement_coords_rl_list = []
+
+        for load_model in load_models:
+            #obs, _ = env_rl.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
+            env_rl = copy.deepcopy(env_rl_main)
+            agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
+        
+            env_rl.loc = ducb_init_loc
+            env_rl.heading = ducb_init_hdg
+            truncated = False
+
+            while env_rl.sample_idx < n_samples_lim and not truncated:
+                action, _step = agent.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, info = env_rl.step(int(action))
+                #rewards = np.append(rewards, reward)
+                if truncated:
+                    print(f'RL truncated: {truncated}')
+
+            measurements_rl_list.append(env_rl.sampled_vals[:min(env_rl.sample_idx, n_samples_lim)])
+            measurement_coords_rl_list.append(env_rl.sampled_coords[:min(env_rl.sample_idx, n_samples_lim)])
+            rl_envs.append(env_rl)
+            rl_ags.append(agent)
+        
+        # Get obs_truth from DUCB env for comparison with GP prediction
+        obs_truth_coords = env_ducb_main._coords_flat
+        obs_truth_values = torch.as_tensor(env_ducb_main.obs_truth)
+
+        # Update GP hyperparams according to current scenario
+        base_model.set_hyperparams(ell_par, ell_perp, angle_deg=random_scenario['cur_dir'], outputscale=max(sig_par, sig_perp), mean_value=obs_truth_values.mean().item())
+        
+        results_intermediate = gpt_ard32.init_strategy_results(strategy_names, metrics=gp_metrics)
+        
+        for j in gp_iterator:
+            #print(f'intermediate prediction (j = {j})')
             
-            ducb_ag = agents.adaptive_agents(model_type='DUCB', obs=obs, kappa=kappa, gamma=gamma, debug=False)
+            # Base strategies
+            strategy_samples = {
+                "Lawnmower": (
+                    measurement_coords_lawnmower[:j],
+                    measurements_lawnmower[:j],),
+            }
 
-            ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(obs=obs)
-            while env_ducb.sample_idx < n_samples_lim:
-                #fig = ducb_ag.plot_acquisition_maps(env_ducb.sampled_coords[:env_ducb.sample_idx], s=2)
-                ducb_wps, ducb_hdg = ducb_ag.get_wps_to_max_objective(env_ducb.step(waypoints=ducb_wps, heading=ducb_hdg))
+            # Add each RL model as its own strategy
+            for name, coords_rl, vals_rl in zip(
+                rl_names, measurement_coords_rl_list, measurements_rl_list):
+                strategy_samples[name] = (coords_rl[:j], vals_rl[:j])
+            
+            # Add each DUCB variant as its own strategy
+            for name, coords_ducb, vals_ducb in zip(
+                ducb_names, measurement_coords_ducb_list, measurements_ducb_list):
+                strategy_samples[name] = (coords_ducb[:j], vals_ducb[:j])
 
-            measurements_ducb = env_ducb.sampled_vals[:n_samples_lim]
-            measurement_coords_ducb = env_ducb.sampled_coords[:n_samples_lim]
-            measurements_ducb_list.append(measurements_ducb)
-            measurement_coords_ducb_list.append(measurement_coords_ducb)
-            ducb_envs.append(env_ducb)
-            ducb_ags.append(ducb_ag)
-
-    # RL agent sampling
-    obs, _ = env_rl_main.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
-    env_rl_main.loc = ducb_init_loc
-    env_rl_main.heading = ducb_init_hdg
-    rl_envs = []
-    rl_ags = []
-    measurements_rl_list = []
-    measurement_coords_rl_list = []
-
-    for load_model in load_models:
-        #obs, _ = env_rl.reset(random_scenario=random_scenario, env_xy=env_xy, values=values)
-        env_rl = copy.deepcopy(env_rl_main)
-        agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
-    
-        env_rl.loc = ducb_init_loc
-        env_rl.heading = ducb_init_hdg
-        truncated = False
-        rewards = np.array([])
-        q_values = []
-
-        while env_rl.sample_idx < n_samples_lim and not truncated:
-            if env_rl.debug:
-                q_vec = rl_gas_survey_dubins_env.get_q_values(agent, obs)
-                q_values.append(q_vec)
-
-            action, _step = agent.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env_rl.step(int(action))
-            #rewards = np.append(rewards, reward)
-            if truncated:
-                print(f'RL truncated: {truncated}')
-
-        if len(q_values):
-            q_values = np.vstack(q_values)
-
-        measurements_rl = env_rl.sampled_vals[:min(env_rl.sample_idx, n_samples_lim)]
-        measurement_coords_rl = env_rl.sampled_coords[:min(env_rl.sample_idx, n_samples_lim)]
-        measurements_rl_list.append(measurements_rl)
-        measurement_coords_rl_list.append(measurement_coords_rl)
-        rl_envs.append(env_rl)
-        rl_ags.append(agent)
-
-    # Compare GP estimates with truth
-    
-    # Get obs_truth from DUCB env for comparison with GP prediction
-    obs_truth_coords = env_ducb_main._coords_flat
-    obs_truth_values = torch.as_tensor(env_ducb_main.obs_truth)
-
-    # Update GP hyperparams according to current scenario
-    base_model.set_hyperparams(ell_par, ell_perp, angle_deg=random_scenario['cur_dir'], outputscale=max(sig_par, sig_perp), mean_value=obs_truth_values.mean().item())
-    
-    strategy_names = ["Lawnmower"] + rl_names + ducb_names
-    results_intermediate = gpt_ard32.init_strategy_results(strategy_names)
-    for j in gp_iterator:
-        print(f'intermediate prediction (j = {j})')
-        
-        # Base strategies
-        strategy_samples = {
-            "Lawnmower": (
-                measurement_coords_lawnmower[:j],
-                measurements_lawnmower[:j],),
-        }
-
-        # Add each RL model as its own strategy
-        for name, coords_rl, vals_rl in zip(
-            rl_names, measurement_coords_rl_list, measurements_rl_list):
-            strategy_samples[name] = (coords_rl[:j], vals_rl[:j])
-        
-        # Add each DUCB variant as its own strategy
-        for name, coords_ducb, vals_ducb in zip(
-            ducb_names, measurement_coords_ducb_list, measurements_ducb_list):
-            strategy_samples[name] = (coords_ducb[:j], vals_ducb[:j])
-
-        results_intermediate = gpt_ard32.evaluate_strategies_for_field_lognorm_gridspec(
-            base_model, lik,
-            obs_truth_coords, obs_truth_values,
-            strategy_samples,
-            results_intermediate,
-            threshold=threshold,
-            obs_x=env_rl_main.obs_x,
-            obs_y=env_rl_main.obs_y,
-            make_plot=False,   # or False for batch runs
-            title_prefix=f"GP predictions for depth {random_scenario['depth']}, t={random_scenario['time']*10} ({j} samples)"
-        )
-
-    # PLOT sampling strategies
-    plot_sampling_strategies = False
-    if plot_sampling_strategies:
-        plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples)
-
-        gpt_ard32.plot_sampling_comparison_n_plots(
-            env_xy, values,
-            plot_coords, plot_vals, plot_labels,
-            threshold=threshold,
-            obs_x=250, obs_y=250,
-            title="Sampling strategies vs true field",
-        )
-    
-    # Comparison statistics
-    # -------------------------------
-    # 1. ACCUMULATE RMSE PER FIELD
-    # -------------------------------
-    rmse_lawn = torch.tensor(
-        results_intermediate["Lawnmower"]["rmse"],
-        dtype=torch.float32
-    )
-    rmse_lawnmower_all_list.append(rmse_lawn)
-
-    # All RL variants
-    for name in rl_names:
-        rmse_rl = torch.tensor(
-            results_intermediate[name]["rmse"],
-            dtype=torch.float32
-        )
-        rmse_rl_all[name].append(rmse_rl)
-    #rmse_rl_all_list.append(rmse_rl_v)
-
-    # All DUCB variants
-    for name in ducb_names:
-        rmse_du = torch.tensor(
-            results_intermediate[name]["rmse"],
-            dtype=torch.float32
-        )
-        rmse_ducb_all[name].append(rmse_du)
-
-    # -------------------------------
-    # 2. ACCUMULATE GAS-DETECTION STATS
-    # -------------------------------
-
-    # Lawnmower (fixed length)
-    c_lawn = torch.cumsum(
-        (measurements_lawnmower > threshold).int(),
-        dim=0
-    )
-    cumsum_lawnmower_all_list.append(c_lawn)
-
-    # DUCB agents (assumed fixed length n_samples_lim each)
-    for name, meas_ducb in zip(ducb_names, measurements_ducb_list):
-        meas_ducb_t = torch.as_tensor(meas_ducb)
-        c_du = torch.cumsum(
-            (meas_ducb_t > threshold).int(),
-            dim=0
-        )
-        # if you want to enforce length n_samples_lim:
-        c_du = c_du[:n_samples_lim]
-        cumsum_ducb_all[name].append(c_du)
-    
-    # RL agents (variable length)
-    for name, meas_rl in zip(rl_names, measurements_rl_list):
-        meas_rl_t = torch.as_tensor(meas_rl)
-        L = meas_rl_t.shape[0]
-        c_rl = torch.cumsum(
-            (meas_rl_t > threshold).int(),
-            dim=0
-        )
-        
-        # Pad to full length n_samples_lim by holding the last value
-        if L < n_samples_lim:
-            pad_val = c_rl[-1].item()
-            padded = torch.cat(
-                [c_rl, pad_val * torch.ones(n_samples_lim - L, dtype=torch.int)]
+            results_intermediate = gpt_ard32.evaluate_strategies_for_field_lognorm_gridspec(
+                base_model, lik,
+                obs_truth_coords, obs_truth_values,
+                strategy_samples,
+                results_intermediate,
+                threshold=threshold,
+                obs_x=env_rl_main.obs_x,
+                obs_y=env_rl_main.obs_y,
+                make_plot=False,   # or False for batch runs
+                title_prefix=f"GP predictions for depth {random_scenario['depth']}, t={random_scenario['time']*10} ({j} samples)"
             )
-        else:
-            padded = c_rl[:n_samples_lim]
-        # if you want to enforce length n_samples_lim:
-        #c_rl = c_rl[:n_samples_lim]
-        cumsum_rl_all[name].append(padded)
 
-    # RL (variable length)
-    #meas_rl_t = torch.as_tensor(measurements_rl)
-    #L = meas_rl_t.shape[0]
-    #detect_rl = (meas_rl_t > threshold).int()
-    #c_rl = torch.cumsum(detect_rl, dim=0)
-    #cumsum_rl_all_list.append(padded)
+        # PLOT sampling strategies
+        plot_sampling_strategies = False
+        if plot_sampling_strategies:
+            plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples)
 
-    i += 1
+            gpt_ard32.plot_sampling_comparison_n_plots(
+                env_xy, values,
+                plot_coords, plot_vals, plot_labels,
+                threshold=threshold,
+                obs_x=250, obs_y=250,
+                title="Sampling strategies vs true field",
+            )
 
-# Compute final statistics
-rmse_lm_all = torch.stack(rmse_lawnmower_all_list).to(dtype=torch.float)   # (N, 6)
-#rmse_ducb_all      = torch.stack(rmse_ducb_all).to(dtype=torch.float)        # (N, 6)
-#rmse_rl_all        = torch.stack(rmse_rl_all_list).to(dtype=torch.float)          # (N, 6)
+        # --------------------------
+        # ACCUMULATE (unified)
+        # --------------------------
+        # GP metrics: append vectors (len(gp_iterator)) per scenario
+        for strat in strategy_names:
+            for m in gp_metrics:
+                gp_all[m][strat].append(torch.tensor(results_intermediate[strat][m], dtype=torch.float32))
 
-cumsum_lm_all = torch.stack(cumsum_lawnmower_all_list).to(dtype=torch.float)  # (N, T)
-#cumsum_ducb_all      = torch.stack(cumsum_ducb_all).to(dtype=torch.float)
-#cumsum_rl_all        = torch.stack(cumsum_rl_all_list).to(dtype=torch.float)
+        # Detection cumsum curves: append vectors (len = n_samples_lim) per scenario
+        cumsum_all["Lawnmower"].append(gpt_ard32.cumsum_above_threshold(measurements_lawnmower, threshold, n_samples_lim))
 
-# For each RL agent, stack its list of results
-rmse_rl_all_stacked = {}   # name → (N_fields, 6)
-cumsum_rl_all_stacked = {} # name → (N_fields, T)
+        for name, meas_rl in zip(rl_names, measurements_rl_list):
+            cumsum_all[name].append(gpt_ard32.cumsum_above_threshold(meas_rl, threshold, n_samples_lim))
 
-for name, lst in rmse_rl_all.items():
-    rmse_rl_all_stacked[name] = torch.stack(lst).float()
+        for name, meas_du in zip(ducb_names, measurements_ducb_list):
+            cumsum_all[name].append(gpt_ard32.cumsum_above_threshold(meas_du, threshold, n_samples_lim))
 
-for name, lst in cumsum_rl_all.items():
-    cumsum_rl_all_stacked[name] = torch.stack(lst).float()
+        succeeded.append(i)
 
-# For each DUCB agent, stack its list of results
-rmse_ducb_all_stacked = {}   # name → (N_fields, 6)
-cumsum_ducb_all_stacked = {} # name → (N_fields, T)
+        # Save after each successful iteration
+        save_checkpoint()
 
-for name, lst in rmse_ducb_all.items():
-    rmse_ducb_all_stacked[name] = torch.stack(lst).float()
+    except Exception as e:
+        # Log error and continue to next iteration
+        print(f"[error] Iteration {i} failed: {type(e).__name__}: {e}")
+        print(traceback.format_exc(limit=10))
+        failed.append({"iter": i, "error": repr(e)})
 
-for name, lst in cumsum_ducb_all.items():
-    cumsum_ducb_all_stacked[name] = torch.stack(lst).float()
+        # Save checkpoint even on failure so you keep progress + error logs
+        save_checkpoint()
 
-# Means
-rmse_mean_lm  = rmse_lm_all.mean(dim=0)
-#rmse_mean_du  = rmse_ducb_all.mean(dim=0)
-#rmse_mean_rl  = rmse_rl_all.mean(dim=0)
-rmse_mean_rl = {}   # name → (6,)
-for name, arr in rmse_rl_all_stacked.items():
-    rmse_mean_rl[name] = arr.mean(dim=0)
+    finally:
+        # Always advance to the next iteration index
+        i += 1
 
-rmse_mean_ducb = {}   # name → (6,)
-for name, arr in rmse_ducb_all_stacked.items():
-    rmse_mean_ducb[name] = arr.mean(dim=0)
-
-# Variances
-rmse_var_lm   = rmse_lm_all.var(dim=0)
-#rmse_var_du   = rmse_ducb_all.var(dim=0)
-#rmse_var_rl   = rmse_rl_all.var(dim=0)
-rmse_var_rl = {}   # name → (6,)
-for name, arr in rmse_rl_all_stacked.items():
-    rmse_var_rl[name] = arr.var(dim=0)
-
-rmse_var_ducb = {}   # name → (6,)
-for name, arr in rmse_ducb_all_stacked.items():
-    rmse_var_ducb[name] = arr.var(dim=0)
-
-# --- CUMSUM ---
-cumsum_mean_lm = cumsum_lm_all.mean(dim=0)
-#cumsum_mean_rl = cumsum_rl_all.mean(dim=0)
-cumsum_mean_rl = {}  # name → (T,)
-for name, arr in cumsum_rl_all_stacked.items():
-    cumsum_mean_rl[name] = arr.mean(dim=0)
-
-cumsum_mean_ducb = {}  # name → (T,)
-for name, arr in cumsum_ducb_all_stacked.items():
-    cumsum_mean_ducb[name] = arr.mean(dim=0)
-
-cumsum_var_lm = cumsum_lm_all.var(dim=0)
-#cumsum_var_rl = cumsum_rl_all.var(dim=0)
-cumsum_var_rl = {}  # name → (T,)
-for name, arr in cumsum_rl_all_stacked.items():
-    cumsum_var_rl[name] = arr.var(dim=0)
-
-cumsum_var_ducb = {}  # name → (T,)
-for name, arr in cumsum_ducb_all_stacked.items():
-    cumsum_var_ducb[name] = arr.var(dim=0)
-
-# %%
-# Save results
-results_to_save = {
-    "rmse_lawnmower": rmse_lm_all,                  # (N_fields, 6)
-    "rmse_rl": rmse_rl_all_stacked,                 # dict[name → tensor(N_fields, 6)]
-    "rmse_ducb": rmse_ducb_all_stacked,             # dict[name → tensor(N_fields, 6)]
-
-    "cumsum_lawnmower": cumsum_lm_all,              # (N_fields, T)
-    "cumsum_rl": cumsum_rl_all_stacked,             # dict[name → tensor(N_fields, T)]
-    "cumsum_ducb": cumsum_ducb_all_stacked,         # dict[name → tensor(N_fields, T)]
-
-    # Optional: metadata so results are traceable
-    "threshold": threshold,
-    "n_samples_lim": n_samples_lim,
-    "rl_agent_names": list(rmse_rl_all_stacked.keys()),
-    "ducb_agent_names": list(rmse_ducb_all_stacked.keys())
+# --------------------------
+# Stack results for analysis
+# --------------------------
+# gp_stacked[metric][strategy] -> (N_fields, N_j)
+gp_stacked = {
+    m: {s: torch.stack(lst).float() for s, lst in per_strat.items() if len(lst) > 0}
+    for m, per_strat in gp_all.items()
 }
 
-fname = f"results_{i}_runs_sc1C_{time.ctime()}.pt"
-torch.save(results_to_save, 'figures/' + fname)
-print(f"{fname}")
+# cumsum_stacked[strategy] -> (N_fields, T)
+cumsum_stacked = {s: torch.stack(lst).float() for s, lst in cumsum_all.items() if len(lst) > 0}
 
- # %%
-# Load from file
+# Convenience summaries (optional)
+gp_mean = {m: {s: arr.mean(dim=0) for s, arr in per.items()} for m, per in gp_stacked.items()}
+gp_var  = {m: {s: arr.var(dim=0)  for s, arr in per.items()} for m, per in gp_stacked.items()}
+cumsum_mean = {s: arr.mean(dim=0) for s, arr in cumsum_stacked.items()}
+cumsum_var  = {s: arr.var(dim=0)  for s, arr in cumsum_stacked.items()}
+
+# Save results (compact + traceable)
+results_to_save = {
+    "gp_metrics": gp_stacked,     # gp_metrics[metric][strategy] = (N_fields, N_j)
+    "cumsum": cumsum_stacked,     # cumsum[strategy] = (N_fields, T)
+    "succeeded": succeeded,
+    "failed": failed,
+
+    # Optional summaries (remove if you prefer only raw)
+    "gp_mean": gp_mean,
+    "gp_var": gp_var,
+    "cumsum_mean": cumsum_mean,
+    "cumsum_var": cumsum_var,
+
+    # Metadata
+    "threshold": threshold,
+    "n_samples_lim": n_samples_lim,
+    "gp_iterator": list(gp_iterator),
+    "strategy_names": strategy_names,
+    "rl_agent_names": list(rl_names),
+    "ducb_agent_names": list(ducb_names),
+    "grid_shape": tuple(gp_pred_resolution),
+    "area_size_m": (250.0, 250.0),
+}
+
+final_path = os.path.join("figures", f"results_final_{scenario}.pt")
+torch.save(results_to_save, final_path)
+print(f"[done] Final stacked results saved -> {final_path}")
+
+# %%
+# Load from finished file 
 files_to_load = [
     'figures/results_20_runs_sc2C_Sat Dec 20 04:10:11 2025.pt',
     'figures/results_20_runs_sc2C_Sat Dec 20 17:02:44 2025.pt'
@@ -570,6 +535,14 @@ loaded = gpt_ard32.load_and_merge_results(files_to_load)
 
 # %%
 # Plotting
+rmse_lm_all = gp_stacked["rmse"]["Lawnmower"]
+rmse_ducb_all_stacked = {n: gp_stacked["rmse"][n] for n in ducb_names}
+rmse_rl_all_stacked = {n: gp_stacked["rmse"][n] for n in rl_names}
+
+cumsum_lm_all = cumsum_stacked["Lawnmower"]
+cumsum_ducb_all_stacked = {n: cumsum_stacked[n] for n in ducb_names}
+cumsum_rl_all_stacked = {n: cumsum_stacked[n] for n in rl_names}
+
 gpt_ard32.plot_cumsum_with_variance_multi_ducb(c_lawn=cumsum_lm_all,
                           c_ducb_dict=cumsum_ducb_all_stacked,
                           c_rl_dict=cumsum_rl_all_stacked)
@@ -594,20 +567,44 @@ print(table_str)
 
 # %%
 # Heatmap view
-Z, kappas_sorted, gammas_sorted = gpt_ard32.build_rmse_grid_from_names(
-    rmse_by_name=rmse_ducb_all_stacked,
-    kappas=kappas,
-    gammas=gammas,
-    mode='median'
-)
+for metric in gp_metrics:
+    # Build dict[name -> tensor(N_fields, N_j)] for DUCB only
+    metric_ducb = {name: gp_stacked[metric][name] for name in ducb_names}
 
-gpt_ard32.plot_rmse_heatmap(
-    Z,
-    kappas_sorted*kappa_scale_back,
-    gammas_sorted,
-    title="DUCB RMSE across $(\\kappa, \\gamma)$",
-    savepath="figures_p3/ducb_rmse_heatmap.eps",
-)
+    Z, kappas_sorted, gammas_sorted = gpt_ard32.build_rmse_grid_from_names(
+        rmse_by_name=metric_ducb,
+        kappas=kappas,
+        gammas=gammas,
+        mode='median'
+    )
+
+    # Title + file naming
+    title = f"DUCB {metric} across $(\\kappa, \\gamma)$"
+    savepath = f"figures_p3/ducb_{metric}_heatmap.eps"
+
+    gpt_ard32.plot_rmse_heatmap(
+        Z,
+        kappas_sorted * kappa_scale_back,
+        gammas_sorted,
+        title=title,
+        savepath=savepath,
+    )
+
+
+# Z, kappas_sorted, gammas_sorted = gpt_ard32.build_rmse_grid_from_names(
+#     rmse_by_name=rmse_ducb_all_stacked,
+#     kappas=kappas,
+#     gammas=gammas,
+#     mode='median'
+# )
+
+# gpt_ard32.plot_rmse_heatmap(
+#     Z,
+#     kappas_sorted*kappa_scale_back,
+#     gammas_sorted,
+#     title="DUCB RMSE across $(\\kappa, \\gamma)$",
+#     savepath="figures_p3/ducb_rmse_heatmap.eps",
+# )
 
 # %%
 # ES comparison
