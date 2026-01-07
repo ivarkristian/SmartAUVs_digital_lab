@@ -61,16 +61,17 @@ gp_pred_resolution = [100, 100]
 # Setup scenario bank
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
-envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+#envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+envs_file = 'tensor_envs/2c_pCO2_112.pt'
 scenario = envs_file.split('/')[-1].split('.')[0]
-#envs_file = 'tensor_envs/2c_pCO2_112.pt'
-threshold = 550 # gas plume threshold
-#threshold = 405
+
+#threshold = 550 # gas plume threshold
+threshold = 405
 
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
-bank.gas_coverage_cutoff(cutoff_concentration=threshold, cutoff_percentage=6)
+#bank.gas_coverage_cutoff(cutoff_concentration=threshold, cutoff_percentage=6)
 
 # %%
 # Sample a scenario for init, with random rotation and offset
@@ -213,7 +214,7 @@ cumsum_all = {s: [] for s in strategy_names}
 
 # %%
 # Start loop here
-iterations = 3
+iterations = 50
 rmse_lawnmower = torch.zeros(n_steps)
 rmse_ducb = torch.zeros(n_steps)
 rmse_rl = torch.zeros(n_steps)
@@ -567,7 +568,8 @@ print(table_str)
 
 # %%
 # Heatmap view
-for metric in gp_metrics:
+gp_metrics_to_plot = ["rmse", "correct_es", "false_es", "iou", "f1", "iou_w", "crps_exc"]
+for metric in gp_metrics_to_plot:
     # Build dict[name -> tensor(N_fields, N_j)] for DUCB only
     metric_ducb = {name: gp_stacked[metric][name] for name in ducb_names}
 
@@ -581,33 +583,21 @@ for metric in gp_metrics:
     # Title + file naming
     title = f"DUCB {metric} across $(\\kappa, \\gamma)$"
     savepath = f"figures_p3/ducb_{metric}_heatmap.eps"
-
+    if metric in ['correct_es', 'iou', 'iou_w', 'f1']:
+        cmap = 'viridis' # high values are good
+    else:
+        cmap = 'viridis_r' # low values are good
+    
     gpt_ard32.plot_rmse_heatmap(
         Z,
         kappas_sorted * kappa_scale_back,
         gammas_sorted,
         title=title,
+        cmap=cmap,
         savepath=savepath,
     )
 
 
-# Z, kappas_sorted, gammas_sorted = gpt_ard32.build_rmse_grid_from_names(
-#     rmse_by_name=rmse_ducb_all_stacked,
-#     kappas=kappas,
-#     gammas=gammas,
-#     mode='median'
-# )
-
-# gpt_ard32.plot_rmse_heatmap(
-#     Z,
-#     kappas_sorted*kappa_scale_back,
-#     gammas_sorted,
-#     title="DUCB RMSE across $(\\kappa, \\gamma)$",
-#     savepath="figures_p3/ducb_rmse_heatmap.eps",
-# )
-
-# %%
-# ES comparison
 
 
 # %%

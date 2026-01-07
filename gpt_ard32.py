@@ -1600,7 +1600,7 @@ def build_rmse_grid_from_names(
                     Z[yi, xi] = float(rmse_by_name[name][:, 5].mean())
                 else:
                     Z[yi, xi] = float(torch.quantile(rmse_by_name[name][:, 5], q=0.5))
-                    print(f'{name}: {Z[yi, xi]}')
+                    #print(f'{name}: {Z[yi, xi]}')
 
     return Z, kappas_sorted, gammas_sorted
 
