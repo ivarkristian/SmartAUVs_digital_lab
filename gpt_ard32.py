@@ -351,9 +351,9 @@ def init_strategy_results(strategy_names, metrics=None):
     return {name: {m: [] for m in metrics} for name in strategy_names}
 
 def recover_results(path="figures/results_running_sc1b.pt", map_location="cpu"):
-    ckpt = torch.load(path, map_location=map_location)
-    gp_all = ckpt["gp_all"]
-    cumsum_all = ckpt["cumsum_all"]
+    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    gp_all = ckpt["gp_metrics"]
+    cumsum_all = ckpt["cumsum"]
     succeeded = ckpt.get("succeeded", [])
     failed = ckpt.get("failed", [])
     return gp_all, cumsum_all, succeeded, failed
@@ -766,6 +766,7 @@ def plot_sampling_comparison_n_plots(
     obs_x, obs_y,
     cmap="viridis",
     title="Sampling strategies vs true field",
+    save_str=None,
     show_true_field=True,
 ):
     """
@@ -820,17 +821,17 @@ def plot_sampling_comparison_n_plots(
     n_agents = len(agent_labels)
     total_panels = n_agents + (1 if show_true_field else 0)
 
-    ncols = 2
+    ncols = 3
     nrows = int(np.ceil(total_panels / ncols))
 
     fig_height = 3 + 3 * nrows
-    fig = plt.figure(figsize=(12, fig_height), dpi=300)
+    fig = plt.figure(figsize=(18, fig_height), dpi=300)
 
     gs = gridspec.GridSpec(
         nrows, ncols, figure=fig,
-        wspace=-0.38, hspace=0.40,
+        wspace=-0.42, hspace=0.30,
         left=0.07, right=0.92,
-        bottom=0.08, top=0.95
+        bottom=0.08, top=0.92
     )
 
     axes = []
@@ -876,7 +877,7 @@ def plot_sampling_comparison_n_plots(
         # Flatten env_xy for background scatter (same grid as X, Y)
         env_xy_flat = env_xy.reshape(-1, 2)
 
-        sc = scatter_samples(ax, X, Y, env_xy_flat, values, "True scalar field")
+        sc = scatter_samples(ax, X, Y, env_xy_flat.cpu().numpy(), values.cpu().numpy(), "True scalar field")
         ax.set_title("True scalar field", fontsize=13)
         ax.set_xlabel("East [m]", fontsize=12)
         ax.set_ylabel("North [m]", fontsize=12)
@@ -891,15 +892,18 @@ def plot_sampling_comparison_n_plots(
             break
         ax = axes[panel_idx]
         panel_idx += 1
+        kappa = label.split('_k')[1].split('_g')[0]
+        gamma = label.split('_g')[1]
+        nice_name = rf"DUCB $\kappa={kappa},\ \gamma={gamma}$"
 
-        sc = scatter_samples(ax, X, Y, np.asarray(coords), np.asarray(vals), label)
+        sc = scatter_samples(ax, X, Y, np.asarray(coords), np.asarray(vals), nice_name)
         if sc is not None:
             last_scatter = sc
             if not show_true_field and mappable_for_cbar is None:
                 mappable_for_cbar = sc
 
     # ---------------- Shared Colorbar ---------------- #
-    cbar_ax = fig.add_axes([0.85, 0.12, 0.02, 0.70])
+    cbar_ax = fig.add_axes([0.85, 0.1, 0.02, 0.85])
     cbar = fig.colorbar(mappable_for_cbar, cax=cbar_ax)
 
     ticks = cbar.get_ticks()
@@ -910,9 +914,10 @@ def plot_sampling_comparison_n_plots(
     ticklabels = [f"{bg + t:.0f}" for t in ticks]
     cbar.set_ticklabels(ticklabels)
     cbar.ax.tick_params(labelsize=11)
-    cbar.set_label("Concentration", fontsize=12)
+    cbar.set_label(r"pCO$_2$", fontsize=12)
 
     fig.suptitle(title, fontsize=14)
+    fig.savefig('figures_p3/' + f'{save_str}_sampling_paths.eps', format='eps', dpi=300)
     plt.show()
 
 def plot_sampling_comparison_lognorm_gridspec(
@@ -1151,34 +1156,36 @@ def plot_sampling_comparison(
     plt.tight_layout()
     plt.show()
 
-def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict, sample_points, mode='mean', save_str=''):
+def plot_running_metric_with_confidence(metric_lawn, metric_rl_dict, metric_ducb_dict, sample_points, metric, mode='mean', save_str=''):
     """
-    Plot RMSE mean ± 95% CI for Lawn mower and multiple DUCB agents.
+    Plot metric mean/median ± 95% CI for Lawn mower and multiple DUCB/RL agents.
 
     Parameters
     ----------
-    rmse_lawn : torch.Tensor, shape (N_runs, K)
-        RMSE across runs for the lawnmower strategy.
-    rmse_ducb_dict : dict
+    metric_lawn : torch.Tensor, shape (N_runs, K)
+        metric across runs for the lawnmower strategy.
+    metric_ducb_dict : dict
         Mapping: ducb_name -> torch.Tensor of shape (N_runs, K)
+    metric_rl_dict : dict
+        Mapping: rl_name -> torch.Tensor of shape (N_runs, K)
     sample_points : array-like, shape (K,)
         Sample counts, e.g. [1000, 1200, 1400, 1600, 1800, 1948]
     """
 
     # Convert lawnmower
-    L = rmse_lawn.cpu().numpy()
+    L = metric_lawn.cpu().numpy()
     #R = rmse_rl.cpu().numpy()
 
     # Convert RLs
     rl_np = {
         name: arr.cpu().numpy()
-        for name, arr in rmse_rl_dict.items()
+        for name, arr in metric_rl_dict.items()
     }
 
     # Convert DUCBs
     ducb_np = {
         name: arr.cpu().numpy()
-        for name, arr in rmse_ducb_dict.items()
+        for name, arr in metric_ducb_dict.items()
     }
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=300)
@@ -1190,7 +1197,6 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict
             mean = np.median(data, axis=0)
 
         std  = data.std(axis=0)
-        #print(f'{label}: {mean}')
 
         ci_low  = mean - 1.96 * std / np.sqrt(data.shape[0])
         ci_high = mean + 1.96 * std / np.sqrt(data.shape[0])
@@ -1226,15 +1232,21 @@ def plot_rmse_with_confidence_multi_ducb(rmse_lawn, rmse_rl_dict, rmse_ducb_dict
         data = ducb_np[name]
         color = ducb_colors[i % len(ducb_colors)]
         ls    = ducb_lstyles[i % len(ducb_lstyles)]
-        add_curve(data, name, color, ls, mode=mode)
+        kappa = name.split('_k')[1].split('_g')[0]
+        gamma = name.split('_g')[1]
+        nice_name = rf"DUCB $\kappa={kappa},\ \gamma={gamma}$"
+        add_curve(data, nice_name, color, ls, mode=mode)
 
     ax.set_xlabel("Number of Samples")
-    ax.set_ylabel("RMSE")
-    ax.set_title("GP Prediction RMSE")
+    if metric == 'rmse': nice_metric = 'RMSE' 
+    elif metric == 'iou_w': nice_metric = r'IoU$_w$'
+    elif metric == 'crps_exc': nice_metric = r'CRPS$_{\mathcal{E}(\tau)}$'
+    ax.set_ylabel(f"{nice_metric}")
+    ax.set_title(f"{nice_metric} on GP prediction")
     ax.grid(alpha=0.3)
     ax.legend(frameon=False, fontsize=9)
     plt.tight_layout()
-    fig.savefig('figures_p3/' + f'rmse_{mode}' + save_str + '.eps', format='eps', dpi=300)
+    fig.savefig('figures_p3/' + f'{metric}_{mode}' + save_str + '.eps', format='eps', dpi=300)
     plt.show()
 
 def plot_rmse_with_confidence(rmse_lawn, rmse_du, rmse_rl, sample_points):
@@ -1335,7 +1347,10 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict, ci=True
         data  = D_dict[name]
         color = ducb_colors[i % len(ducb_colors)]
         ls    = ducb_lstyles[i % len(ducb_lstyles)]
-        add_curve(data, name, color, ls, ci)
+        kappa = name.split('_k')[1].split('_g')[0]
+        gamma = name.split('_g')[1]
+        nice_name = rf"DUCB $\kappa={kappa},\ \gamma={gamma}$"
+        add_curve(data, nice_name, color, ls, ci)
 
     ax.set_xlabel("Sample Index")
     ax.set_ylabel("Cumulative detections (> threshold)")
@@ -1343,7 +1358,7 @@ def plot_cumsum_with_variance_multi_ducb(c_lawn, c_ducb_dict, c_rl_dict, ci=True
     ax.grid(alpha=0.3)
     ax.legend(frameon=False, fontsize=9)
     plt.tight_layout()
-    fig.savefig('figures_p3/' + 'det_performances' + save_str + '.eps', format='eps', dpi=300)
+    fig.savefig('figures_p3/' + 'cumsum' + save_str + '.eps', format='eps', dpi=300)
     plt.show()
 
 def plot_cumsum_with_variance(c_lawn, c_du, c_rl):
@@ -1748,7 +1763,7 @@ def load_and_merge_results(
     metadata_reference = {}
 
     for fname in filenames:
-        data = torch.load(fname, map_location=device)
+        data = torch.load(fname, map_location=device, weights_only=False)
 
         for key, value in data.items():
 

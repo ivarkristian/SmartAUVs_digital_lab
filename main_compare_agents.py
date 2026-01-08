@@ -62,16 +62,17 @@ gp_pred_resolution = [100, 100]
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
 #envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
-envs_file = 'tensor_envs/2c_pCO2_112.pt'
+#envs_file = 'tensor_envs/2c_pCO2_112.pt'
+envs_file = 'tensor_envs/1b_pco2_67_69.pt'
 scenario = envs_file.split('/')[-1].split('.')[0]
 
-#threshold = 550 # gas plume threshold
-threshold = 405
+threshold = 550 # gas plume threshold
+#threshold = 405
 
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
-#bank.gas_coverage_cutoff(cutoff_concentration=threshold, cutoff_percentage=6)
+bank.gas_coverage_cutoff(cutoff_concentration=threshold, cutoff_percentage=6)
 
 # %%
 # Sample a scenario for init, with random rotation and offset
@@ -155,11 +156,13 @@ kappa_scale = 5.0/255
 kappa_scale_back = 1/kappa_scale
 #kappas = np.array([1]) * (5.0/255.0)
 #kappas = np.array([0.2, 0.6, 1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 4.0]) * (5.0/255.0)
-kappas = np.array([0.5, 1, 2, 5, 10, 20, 50]) * (5.0/255.0)
+#kappas = np.array([0.5, 1, 2, 5, 10, 20, 50]) * (5.0/255.0) # This was selected for paper 3
 #kappas = np.array([12, 14, 16, 18]) * (5.0/255.0)
 #kappas = np.array([20, 22, 24, 50]) * (5.0/255.0)
 #kappas = np.array([30]) * (5.0/255.0)
-gammas = np.array([0.0, -0.05, -0.1, -0.2, -0.5])
+kappas = []
+gammas = []
+#gammas = np.array([0.0, -0.05, -0.1, -0.2, -0.5]) # This was selected for paper 3
 #gammas = np.array([-1.0]) * 0.1
 ducb_names = []
 for kappa in kappas:
@@ -180,9 +183,8 @@ env_rl_main = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resoluti
 #load_model = '1761655432_dunder_0_10329902.zip'
 #load_model = '1761655432_dunder_0_14219947' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 #load_models = ['1761655432_dunder_0_1009963', '1761655432_dunder_0_10009907', '1761655432_dunder_1_259932', '1761655432_dunder_1_10299941', '1761655432_dunder_1_14699929'] # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-#rl_names = ['1M', '10M', '20M', '30M', '35M']
-load_models = []
-rl_names = []
+rl_names = ['10M', '20M', '30M', '40M']
+load_models = ['10M', '20M', '30M', '40M']
 models_dir = "models"
 
 #agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
@@ -214,7 +216,7 @@ cumsum_all = {s: [] for s in strategy_names}
 
 # %%
 # Start loop here
-iterations = 50
+iterations = 3
 rmse_lawnmower = torch.zeros(n_steps)
 rmse_ducb = torch.zeros(n_steps)
 rmse_rl = torch.zeros(n_steps)
@@ -434,8 +436,11 @@ while i < iterations:
 
         # PLOT sampling strategies
         plot_sampling_strategies = False
+        #ducb_names_to_plot = ['DUCB_k1.00_g0.00', 'DUCB_k10.00_g0.00', 'DUCB_k50.00_g-0.10', 'DUCB_k0.50_g-0.10', 'DUCB_k5.00_g-0.50']
+        ducb_names_to_plot = []
+        rl_names_to_plot = rl_names
         if plot_sampling_strategies:
-            plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples)
+            plot_coords, plot_vals, plot_labels = gpt_ard32.assemble_agent_plot_data(strategy_samples, agents=['lawnmower'] + ducb_names_to_plot + rl_names_to_plot)
 
             gpt_ard32.plot_sampling_comparison_n_plots(
                 env_xy, values,
@@ -443,6 +448,7 @@ while i < iterations:
                 threshold=threshold,
                 obs_x=250, obs_y=250,
                 title="Sampling strategies vs true field",
+                save_str='RL'
             )
 
         # --------------------------
@@ -529,29 +535,41 @@ print(f"[done] Final stacked results saved -> {final_path}")
 # %%
 # Load from finished file 
 files_to_load = [
-    'figures/results_20_runs_sc2C_Sat Dec 20 04:10:11 2025.pt',
-    'figures/results_20_runs_sc2C_Sat Dec 20 17:02:44 2025.pt'
+    #'figures/results_20_runs_sc2C_Sat Dec 20 04:10:11 2025.pt',
+    #'figures/results_20_runs_sc2C_Sat Dec 20 17:02:44 2025.pt'
+    'figures/results_final_1c_pCO2_67_69.pt'
     ]
-loaded = gpt_ard32.load_and_merge_results(files_to_load)
+gp_stacked, cumsum_stacked, succeeded, failed = gpt_ard32.recover_results(files_to_load[0])
 
 # %%
 # Plotting
-rmse_lm_all = gp_stacked["rmse"]["Lawnmower"]
-rmse_ducb_all_stacked = {n: gp_stacked["rmse"][n] for n in ducb_names}
-rmse_rl_all_stacked = {n: gp_stacked["rmse"][n] for n in rl_names}
+ducb_names_to_plot = ['DUCB_k1.00_g0.00', 'DUCB_k10.00_g0.00', 'DUCB_k50.00_g-0.10', 'DUCB_k0.50_g-0.10', 'DUCB_k5.00_g-0.50']
+rl_names_to_plot = []
+gp_metrics_to_plot = ["rmse", "iou_w", "crps_exc"]
 
 cumsum_lm_all = cumsum_stacked["Lawnmower"]
-cumsum_ducb_all_stacked = {n: cumsum_stacked[n] for n in ducb_names}
-cumsum_rl_all_stacked = {n: cumsum_stacked[n] for n in rl_names}
+cumsum_ducb_all_stacked = {n: cumsum_stacked[n] for n in ducb_names_to_plot}
+cumsum_rl_all_stacked = {n: cumsum_stacked[n] for n in rl_names_to_plot}
 
 gpt_ard32.plot_cumsum_with_variance_multi_ducb(c_lawn=cumsum_lm_all,
                           c_ducb_dict=cumsum_ducb_all_stacked,
-                          c_rl_dict=cumsum_rl_all_stacked)
-gpt_ard32.plot_rmse_with_confidence_multi_ducb(rmse_lawn=rmse_lm_all,            # (N_fields, K)
-                                               rmse_rl_dict=rmse_rl_all_stacked,
-                                                rmse_ducb_dict=rmse_ducb_all_stacked,    # dict[name → (N_fields, K)]
-                                                sample_points=gp_iterator,
-                                                mode='median')
+                          c_rl_dict=cumsum_rl_all_stacked,
+                          ci=False, save_str='DUCB_1c')
+
+for metric in gp_metrics_to_plot:
+
+    metric_lm_all = gp_stacked[metric]["Lawnmower"]
+    metric_ducb_all_stacked = {n: gp_stacked[metric][n] for n in ducb_names_to_plot}
+    metric_rl_all_stacked = {n: gp_stacked[metric][n] for n in rl_names_to_plot}
+
+    gpt_ard32.plot_running_metric_with_confidence(metric_lawn=metric_lm_all,            # (N_fields, K)
+                                                    metric_rl_dict=metric_rl_all_stacked,
+                                                    metric_ducb_dict=metric_ducb_all_stacked,    # dict[name → (N_fields, K)]
+                                                    sample_points=gp_iterator,
+                                                    metric=metric,
+                                                    mode='median',
+                                                    save_str=f'DUCB_1c')
+
 # %%
 # Table view
 table_str = gpt_ard32.build_rmse_table_latex(
@@ -568,7 +586,7 @@ print(table_str)
 
 # %%
 # Heatmap view
-gp_metrics_to_plot = ["rmse", "correct_es", "false_es", "iou", "f1", "iou_w", "crps_exc"]
+
 for metric in gp_metrics_to_plot:
     # Build dict[name -> tensor(N_fields, N_j)] for DUCB only
     metric_ducb = {name: gp_stacked[metric][name] for name in ducb_names}
@@ -581,7 +599,10 @@ for metric in gp_metrics_to_plot:
     )
 
     # Title + file naming
-    title = f"DUCB {metric} across $(\\kappa, \\gamma)$"
+    if metric == 'rmse': nice_metric = 'RMSE' 
+    elif metric == 'iou_w': nice_metric = r'IoU$_w$'
+    elif metric == 'crps_exc': nice_metric = r'CRPS$_{\mathcal{E}(\tau)}$'
+    title = f"DUCB {nice_metric} across $(\\kappa, \\gamma)$"
     savepath = f"figures_p3/ducb_{metric}_heatmap.eps"
     if metric in ['correct_es', 'iou', 'iou_w', 'f1']:
         cmap = 'viridis' # high values are good
@@ -594,7 +615,8 @@ for metric in gp_metrics_to_plot:
         gammas_sorted,
         title=title,
         cmap=cmap,
-        savepath=savepath,
+        cbar_label=nice_metric,
+        savepath=savepath
     )
 
 
