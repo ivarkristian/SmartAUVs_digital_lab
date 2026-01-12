@@ -757,7 +757,9 @@ def assemble_agent_plot_data(strategy_samples, agents="all"):
 
     return agent_coords_list, agent_vals_list, agent_labels
 
-def plot_sampling_comparison_n_plots(
+
+
+def plot_sampling_comparison_n_plots_old(
     env_xy, values,
     agent_coords_list,   # list of (N_i, 2) arrays
     agent_vals_list,     # list of (N_i,) arrays
@@ -849,7 +851,17 @@ def plot_sampling_comparison_n_plots(
 
     # ---------------- Helper: scatter ---------------- #
     def scatter_samples(ax, X, Y, samp_xy, samp_vals, label):
-        ax.scatter(X, Y, c="lightgray", s=5, alpha=0.3, linewidths=0)
+        # Uniform background over the domain extent
+        xmin, xmax = np.min(X), np.max(X)
+        ymin, ymax = np.min(Y), np.max(Y)
+
+        ax.set_facecolor("white")
+        ax.add_patch(plt.Rectangle(
+            (xmin, ymin), xmax - xmin, ymax - ymin,
+            facecolor="0.95", edgecolor="none", zorder=0
+        ))
+
+        #ax.scatter(X, Y, c="lightgray", s=5, alpha=0.3, linewidths=0)
         if samp_xy.size == 0:
             ax.set_title(label + " (no samples)", fontsize=13)
             return None
@@ -859,7 +871,9 @@ def plot_sampling_comparison_n_plots(
         sc = ax.scatter(
             samp_xy[:, 0], samp_xy[:, 1],
             c=excess, cmap=cmap, norm=norm,
-            s=12, linewidths=0
+            s=12, linewidths=0,
+            rasterized=True,
+            zorder=2
         )
         ax.set_title(label, fontsize=13)
         ax.set_xlabel("East [m]", fontsize=12)
@@ -892,9 +906,12 @@ def plot_sampling_comparison_n_plots(
             break
         ax = axes[panel_idx]
         panel_idx += 1
-        kappa = label.split('_k')[1].split('_g')[0]
-        gamma = label.split('_g')[1]
-        nice_name = rf"DUCB $\kappa={kappa},\ \gamma={gamma}$"
+        if 'DUCB' in label:
+            kappa = label.split('_k')[1].split('_g')[0]
+            gamma = label.split('_g')[1]
+            nice_name = rf"DUCB $\kappa={kappa},\ \gamma={gamma}$"
+        else:
+            nice_name = label
 
         sc = scatter_samples(ax, X, Y, np.asarray(coords), np.asarray(vals), nice_name)
         if sc is not None:

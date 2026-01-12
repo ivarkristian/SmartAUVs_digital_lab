@@ -273,7 +273,44 @@ class ScenarioBank:
         for i in range(len(self.environments)):
             torch.clamp_(self.environments[i]['values'], min, max)
 
-    def gas_coverage_cutoff(self, cutoff_concentration=0, cutoff_percentage=0):
+    def gas_coverage_cutoff(
+        self,
+        cutoff_concentration=0,
+        cutoff_percentage_min=0.0,
+        cutoff_percentage_max=np.inf,
+    ):
+        """
+        Filter environments based on percentage of grid points exceeding
+        a concentration threshold.
+
+        Keeps environments where:
+            cutoff_percentage_min <= plume_coverage <= cutoff_percentage_max
+        """
+        percentages = np.zeros(len(self.environments))
+
+        for i, env in enumerate(self.environments):
+            vals = np.asarray(env["values"])
+            pct = (vals > cutoff_concentration).sum() / len(vals) * 100.0
+            percentages[i] = pct
+
+        # Apply interval filter
+        kept = [
+            env
+            for env, pct in zip(self.environments, percentages)
+            if cutoff_percentage_min <= pct <= cutoff_percentage_max
+        ]
+
+        n_removed = len(self.environments) - len(kept)
+        self.environments = kept
+
+        print(
+            f"Removed environments with gas plume coverage outside "
+            f"[{cutoff_percentage_min}%, {cutoff_percentage_max}%]"
+        )
+        print(f"(Gas plume defined as concentration > {cutoff_concentration})")
+        print(f"{len(self.environments)} environments left ({n_removed} removed)")
+
+    def gas_coverage_cutoff_old(self, cutoff_concentration=0, cutoff_percentage=0):
         # compute percentage above threshold for each environment
         percentages = np.zeros(len(self.environments))
         for i, env in enumerate(self.environments):

@@ -41,6 +41,7 @@ importlib.reload(rl_gas_survey_dubins_env)
 importlib.reload(variograms)
 importlib.reload(gpt_ard32)
 importlib.reload(agents)
+importlib.reload(rl_scenario_bank)
 
 # %%
 # Device selection supporting CUDA, MPS (Apple Silicon), or CPU
@@ -61,9 +62,9 @@ gp_pred_resolution = [100, 100]
 # Setup scenario bank
 bank = rl_scenario_bank.ScenarioBank(data_dir='.')
 
-#envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
+envs_file = 'tensor_envs/1c_pCO2_67_69.pt'
 #envs_file = 'tensor_envs/2c_pCO2_112.pt'
-envs_file = 'tensor_envs/1b_pco2_67_69.pt'
+#envs_file = 'tensor_envs/1b_pco2_67_69.pt'
 scenario = envs_file.split('/')[-1].split('.')[0]
 
 threshold = 550 # gas plume threshold
@@ -72,7 +73,8 @@ threshold = 550 # gas plume threshold
 bank.load_envs(envs_file)
 sensor_range = [0, 2000]
 bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
-bank.gas_coverage_cutoff(cutoff_concentration=threshold, cutoff_percentage=6)
+
+bank.gas_coverage_cutoff(cutoff_concentration=threshold, cutoff_percentage_min=3, cutoff_percentage_max=6)
 
 # %%
 # Sample a scenario for init, with random rotation and offset
@@ -183,9 +185,9 @@ env_rl_main = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resoluti
 #load_model = '1761655432_dunder_0_10329902.zip'
 #load_model = '1761655432_dunder_0_14219947' # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
 #load_models = ['1761655432_dunder_0_1009963', '1761655432_dunder_0_10009907', '1761655432_dunder_1_259932', '1761655432_dunder_1_10299941', '1761655432_dunder_1_14699929'] # PERDQN, 11000, dubins(25), r_w=[5, 1, 1], 45 deg actions
-rl_names = ['10M', '20M', '30M', '40M']
-load_models = ['10M', '20M', '30M', '40M']
-models_dir = "models"
+rl_names = ['10M', '20M', '30M', '35M', '40M']
+load_models = ['10M', '20M', '30M', '35M', '40M']
+models_dir = "models/p3_rl_agents"
 
 #agent = DQN.load(f"{models_dir}/{load_model}", env=env_rl, device=env_rl.device)
 
@@ -216,7 +218,7 @@ cumsum_all = {s: [] for s in strategy_names}
 
 # %%
 # Start loop here
-iterations = 3
+iterations = 1
 rmse_lawnmower = torch.zeros(n_steps)
 rmse_ducb = torch.zeros(n_steps)
 rmse_rl = torch.zeros(n_steps)
@@ -435,7 +437,7 @@ while i < iterations:
             )
 
         # PLOT sampling strategies
-        plot_sampling_strategies = False
+        plot_sampling_strategies = True
         #ducb_names_to_plot = ['DUCB_k1.00_g0.00', 'DUCB_k10.00_g0.00', 'DUCB_k50.00_g-0.10', 'DUCB_k0.50_g-0.10', 'DUCB_k5.00_g-0.50']
         ducb_names_to_plot = []
         rl_names_to_plot = rl_names
@@ -534,17 +536,22 @@ print(f"[done] Final stacked results saved -> {final_path}")
 
 # %%
 # Load from finished file 
-files_to_load = [
-    #'figures/results_20_runs_sc2C_Sat Dec 20 04:10:11 2025.pt',
-    #'figures/results_20_runs_sc2C_Sat Dec 20 17:02:44 2025.pt'
-    'figures/results_final_1c_pCO2_67_69.pt'
-    ]
-gp_stacked, cumsum_stacked, succeeded, failed = gpt_ard32.recover_results(files_to_load[0])
+load = True
+if load:
+    files_to_load = [
+        #'figures/results_20_runs_sc2C_Sat Dec 20 04:10:11 2025.pt',
+        #'figures/results_20_runs_sc2C_Sat Dec 20 17:02:44 2025.pt'
+        #'figures/results_final_1c_pCO2_67_69.pt' # p3 ducb
+        #'figures/results_final_1b_pco2_67_69.pt'
+        'figures/completed_50/results_final_1c_pCO2_67_69_above6.pt'
+        ]
+    gp_stacked, cumsum_stacked, succeeded, failed = gpt_ard32.recover_results(files_to_load[0])
 
 # %%
 # Plotting
-ducb_names_to_plot = ['DUCB_k1.00_g0.00', 'DUCB_k10.00_g0.00', 'DUCB_k50.00_g-0.10', 'DUCB_k0.50_g-0.10', 'DUCB_k5.00_g-0.50']
-rl_names_to_plot = []
+#ducb_names_to_plot = ['DUCB_k1.00_g0.00', 'DUCB_k10.00_g0.00', 'DUCB_k50.00_g-0.10', 'DUCB_k0.50_g-0.10', 'DUCB_k5.00_g-0.50']
+ducb_names_to_plot = []
+rl_names_to_plot = rl_names
 gp_metrics_to_plot = ["rmse", "iou_w", "crps_exc"]
 
 cumsum_lm_all = cumsum_stacked["Lawnmower"]
@@ -554,8 +561,9 @@ cumsum_rl_all_stacked = {n: cumsum_stacked[n] for n in rl_names_to_plot}
 gpt_ard32.plot_cumsum_with_variance_multi_ducb(c_lawn=cumsum_lm_all,
                           c_ducb_dict=cumsum_ducb_all_stacked,
                           c_rl_dict=cumsum_rl_all_stacked,
-                          ci=False, save_str='DUCB_1c')
+                          ci=False, save_str='RL_1c')
 
+# %%
 for metric in gp_metrics_to_plot:
 
     metric_lm_all = gp_stacked[metric]["Lawnmower"]
@@ -568,7 +576,7 @@ for metric in gp_metrics_to_plot:
                                                     sample_points=gp_iterator,
                                                     metric=metric,
                                                     mode='median',
-                                                    save_str=f'DUCB_1c')
+                                                    save_str=f'RL_1c')
 
 # %%
 # Table view
