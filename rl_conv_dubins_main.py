@@ -62,9 +62,11 @@ def main():
             device = torch.device("cpu") 
 
     # dummy env
-    env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100])
-    #env = make_env(1, bank, device)
+    channels = np.array([1, 1, 0, 0, 0])
+    env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], channels=channels)
+    obs, info = env.reset()   # single env, not vec env
 
+    n_envs = 2
     buffer_size = 400_000                      # how many transitions
 
     replay_buffer = rl_DQN_PER.PrioritizedCpuDictReplayBuffer(
@@ -73,6 +75,7 @@ def main():
         action_space      = env.action_space,
         device            = "cpu",           # storage
         sample_device     = device,          # default target device
+        n_envs            = n_envs,
         optimize_memory_usage = False,
         alpha=0.6, beta0=0.4, beta_steps=1_000_000, eps=1e-6
     )
@@ -121,7 +124,6 @@ def main():
             features_extractor_kwargs=dict(features_dim=512),
         )
 
-        n_envs = 2
         vec_env = SubprocVecEnv([make_env(i, bank, device) for i in range(n_envs)])
 
         agent = PERDQN(
@@ -142,6 +144,8 @@ def main():
 
         agent.replay_buffer = replay_buffer          # overwrite in place
 
+
+    obs = vec_env.reset()
 
     #TIMESTEPS = 2400
     TIMESTEPS = 10000
