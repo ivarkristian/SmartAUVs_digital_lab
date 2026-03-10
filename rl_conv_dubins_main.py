@@ -61,9 +61,9 @@ def main():
         else:
             device = torch.device("cpu") 
 
-
-    #env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], r_weights=r_weights, channels=channels, turn_radius=turn_radius, reward_func=reward_func, timer=False, debug=False, device=device)
-    env = make_env(1, bank, device)
+    # dummy env
+    env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100])
+    #env = make_env(1, bank, device)
 
     buffer_size = 400_000                      # how many transitions
 
