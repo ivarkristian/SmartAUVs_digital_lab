@@ -42,16 +42,29 @@ class PERBatch:
 
 
 class PrioritizedCpuDictReplayBuffer(DictReplayBuffer):
-    def __init__(self, *args, alpha=0.6, beta0=0.4, beta_steps=1_000_000, eps=1e-6,
-                 sample_device=None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        alpha=0.6,
+        beta0=0.4,
+        beta_steps=1_000_000,
+        eps=1e-6,
+        sample_device=None,
+        **kwargs,
+    ):
         """
         alpha: priority exponent (0 => uniform, 1 => fully prioritized)
         beta0: initial IS-correction exponent
         beta_steps: steps to anneal beta to 1.0 (linear)
         eps: small floor to keep non-zero priority
         sample_device: torch device for returned batches (e.g., 'cuda:0')
+
+        Important:
+        Priorities are stored per transition slot: (buffer_pos, env_idx),
+        i.e. shape (buffer_size, n_envs), not just (buffer_size,).
         """
         super().__init__(*args, **kwargs)
+
         self.alpha = float(alpha)
         self.beta0 = float(beta0)
         self.beta_steps = int(beta_steps)
@@ -60,13 +73,18 @@ class PrioritizedCpuDictReplayBuffer(DictReplayBuffer):
         self.eps = float(eps)
         self.sample_device = torch.device(sample_device) if sample_device else None
 
-        self.priorities = np.zeros((self.buffer_size,), dtype=np.float32)
-        self.max_priority = 1.0  # new items start with max priority
+        # One priority per stored transition, not per row
+        self.priorities = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.max_priority = 1.0
 
     def add(self, *args, **kwargs):
-        idx = self.pos  # index that will be written by super().add
+        """
+        SB3 writes one replay-buffer row self.pos containing transitions for all envs.
+        We assign max priority to every env slot in that row.
+        """
+        idx = self.pos
         super().add(*args, **kwargs)
-        self.priorities[idx] = self.max_priority
+        self.priorities[idx, :] = self.max_priority
 
     def _current_beta(self):
         if self.beta_steps > 0:
@@ -74,51 +92,134 @@ class PrioritizedCpuDictReplayBuffer(DictReplayBuffer):
             self.beta = self.beta0 + frac * (1.0 - self.beta0)
         return self.beta
 
-    def sample(self, batch_size: int, env=None, device=None):
-        # 1) compute valid range
-        valid_size = self.buffer_size if self.full else self.pos
-        assert valid_size > 0, "Cannot sample from an empty buffer."
+    def _get_samples_for_indices(self, batch_indices: np.ndarray, env_indices: np.ndarray, env=None):
+        """
+        Fetch exactly the transitions identified by (batch_indices, env_indices).
 
-        # 2) probabilities ∝ priority^alpha
-        prios = self.priorities[:valid_size].copy()
-        if prios.max() == 0.0:
-            prios[:] = 1.0
-        probs = prios ** self.alpha
+        This mirrors SB3's multi-env replay-buffer indexing pattern:
+        obs[key][batch_indices, env_indices, ...]
+        """
+        # Normalize observations if needed
+        obs_ = self._normalize_obs(
+            {key: obs[batch_indices, env_indices, :] for key, obs in self.observations.items()},
+            env,
+        )
+        next_obs_ = self._normalize_obs(
+            {key: obs[batch_indices, env_indices, :] for key, obs in self.next_observations.items()},
+            env,
+        )
+
+        assert isinstance(obs_, dict)
+        assert isinstance(next_obs_, dict)
+
+        observations = {key: self.to_torch(obs) for key, obs in obs_.items()}
+        next_observations = {key: self.to_torch(obs) for key, obs in next_obs_.items()}
+
+        actions = self.to_torch(self.actions[batch_indices, env_indices])
+
+        dones = self.to_torch(
+            self.dones[batch_indices, env_indices] * (1 - self.timeouts[batch_indices, env_indices])
+        ).reshape(-1, 1)
+
+        rewards = self.to_torch(
+            self._normalize_reward(self.rewards[batch_indices, env_indices].reshape(-1, 1), env)
+        )
+
+        return DictReplayBufferSamples(
+            observations=observations,
+            actions=actions,
+            next_observations=next_observations,
+            dones=dones,
+            rewards=rewards,
+        )
+
+    def sample(self, batch_size: int, env=None, device=None):
+        """
+        Sample PER minibatch over individual transition slots (buffer_pos, env_idx).
+        Returns flat indices into priorities.reshape(-1), so update_priorities() can
+        update the exact sampled transitions.
+        """
+        # Number of valid replay rows
+        valid_rows = self.buffer_size if self.full else self.pos
+        assert valid_rows > 0, "Cannot sample from an empty buffer."
+
+        # Valid priorities over rows actually written so far
+        valid_prios_2d = self.priorities[:valid_rows, :]   # shape: (valid_rows, n_envs)
+        flat_prios = valid_prios_2d.reshape(-1).copy()     # shape: (valid_rows * n_envs,)
+
+        if flat_prios.max() == 0.0:
+            flat_prios[:] = 1.0
+
+        probs = flat_prios ** self.alpha
         probs /= probs.sum()
 
-        replace = valid_size < batch_size
-        indices = np.random.choice(valid_size, size=batch_size, p=probs, replace=replace)
+        n_valid_transitions = flat_prios.shape[0]
+        replace = n_valid_transitions < batch_size
 
-        # 3) importance-sampling weights
+        # Sample flat transition indices, then recover row/env coordinates
+        flat_indices = np.random.choice(
+            n_valid_transitions,
+            size=batch_size,
+            p=probs,
+            replace=replace,
+        )
+
+        batch_indices, env_indices = np.unravel_index(flat_indices, (valid_rows, self.n_envs))
+
         beta = self._current_beta()
         self.beta_updates += 1
-        weights = (valid_size * probs[indices]) ** (-beta)
+
+        weights = (n_valid_transitions * probs[flat_indices]) ** (-beta)
         weights /= weights.max()
         weights = torch.as_tensor(weights, dtype=torch.float32)
 
-        # 4) fetch tensors for *our chosen indices*
-        #    _get_samples builds torch tensors on self.device (which is CPU in your setup)
-        raw_batch: DictReplayBufferSamples = self._get_samples(indices)
+        raw_batch = self._get_samples_for_indices(batch_indices, env_indices, env=env)
 
-        # 5) move to target device (GPU/CPU) like your CpuDictReplayBuffer
         target_device = device or self.sample_device
         if target_device is not None:
-            obs      = {k: v.to(target_device) for k, v in raw_batch.observations.items()}
+            obs = {k: v.to(target_device) for k, v in raw_batch.observations.items()}
             next_obs = {k: v.to(target_device) for k, v in raw_batch.next_observations.items()}
-            actions  = raw_batch.actions.to(target_device)
-            rewards  = raw_batch.rewards.to(target_device)
-            dones    = raw_batch.dones.to(target_device)
-            weights  = weights.to(target_device)
+            actions = raw_batch.actions.to(target_device)
+            rewards = raw_batch.rewards.to(target_device)
+            dones = raw_batch.dones.to(target_device)
+            weights = weights.to(target_device)
         else:
-            obs, next_obs = raw_batch.observations, raw_batch.next_observations
-            actions, rewards, dones = raw_batch.actions, raw_batch.rewards, raw_batch.dones
+            obs = raw_batch.observations
+            next_obs = raw_batch.next_observations
+            actions = raw_batch.actions
+            rewards = raw_batch.rewards
+            dones = raw_batch.dones
 
-        return PERBatch(obs, actions, next_obs, dones, rewards, weights, indices), (probs[indices].mean()/probs.mean(), probs[indices].std()/probs.std())
+        return (
+            PERBatch(
+                obs,
+                actions,
+                next_obs,
+                dones,
+                rewards,
+                weights,
+                flat_indices,   # flat indices into priorities[:valid_rows, :].reshape(-1)
+            ),
+            (
+                probs[flat_indices].mean() / probs.mean(),
+                probs[flat_indices].std() / (probs.std() + 1e-12),
+            ),
+        )
 
     def update_priorities(self, indices: np.ndarray, new_priorities: np.ndarray):
-        new_p = np.asarray(new_priorities, dtype=np.float32).reshape(-1)
+        """
+        indices: flat indices returned by sample(), referring to
+                 priorities[:valid_rows, :].reshape(-1)
+
+        Since flat indices are over the logical valid region, we map them back to
+        (buffer_pos, env_idx) using the full (buffer_size, n_envs) layout.
+        """
         idx = np.asarray(indices).reshape(-1)
-        self.priorities[idx] = np.maximum(new_p, self.eps)
+        new_p = np.asarray(new_priorities, dtype=np.float32).reshape(-1)
+        new_p = np.maximum(new_p, self.eps)
+
+        row_idx, env_idx = np.unravel_index(idx, (self.buffer_size, self.n_envs))
+        self.priorities[row_idx, env_idx] = new_p
         self.max_priority = max(self.max_priority, float(new_p.max()))
 
 
