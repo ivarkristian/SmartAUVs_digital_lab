@@ -63,7 +63,7 @@ def main():
 
     # dummy env
     channels = np.array([1, 1, 0, 0, 0])
-    env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], channels=channels)
+    env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], channels=channels, device=device)
     obs, info = env.reset()   # single env, not vec env
 
     n_envs = 2
