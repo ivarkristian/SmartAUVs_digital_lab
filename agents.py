@@ -296,22 +296,6 @@ class adaptive_agents():
         self.dy = self._coord_y - self.loc[1]
         self.dist = np.hypot(self.dx, self.dy)
 
-        # - Turn radius masks -
-        # Find center of circles
-        #pi = math.pi
-        #a = pi*self.hdg.argmax()/4
-        #rc_rot = a - pi/2
-        #lc_rot = a + pi/2
-        #rc_centre = (self.loc[0] + math.cos(rc_rot)*self.turn_radius, self.loc[1] + math.sin(rc_rot)*self.turn_radius)
-        #lc_centre = (self.loc[0] + math.cos(lc_rot)*self.turn_radius, self.loc[1] + math.sin(lc_rot)*self.turn_radius)
-
-        # Compute left and right masks and total turn radius mask
-        #rc_mask = in_circle(self._coords, rc_centre[0], rc_centre[1], self.turn_radius)
-        #lc_mask = in_circle(self._coords, lc_centre[0], lc_centre[1], self.turn_radius)
-        #rc_dist = rc_mask*(self.dist - self.turn_radius*2)
-        #lc_dist = lc_mask*(self.dist - self.turn_radius*2)
-        #self.turn_radius_mask = rc_dist + lc_dist
-
         self.dubins_dist = dubins_arc_tangent_distance_lr(self.loc, self.hdg, self.turn_radius, self._coords)
 
         match self.type:
@@ -333,6 +317,15 @@ class adaptive_agents():
                 self.var_scaled = self.var * self.kappa
                 self.dist_scaled = self.dubins_dist * self.gamma
                 self.map = self.gas + self.var_scaled + self.dist_scaled
+                self.plot_ducb_components(
+                    gas=self.gas,
+                    var_scaled=self.var_scaled,
+                    dist_scaled=self.dist_scaled,
+                    ducb_map=self.map,
+                    loc=self.loc,
+                    heading_onehot=self.hdg,
+                    save_path=f"figures_p3/fig_ipp_versions/ducb_breakdown_{self.loc[0]:.2}_{self.loc[1]:.2}.pdf",
+                )
             
             case 'DUCB_beta':
                 # Balances entropy reduction with sampling of high concentrations
@@ -484,7 +477,159 @@ class adaptive_agents():
                 "distance:", dists[best_dist_idx])
         
         return best_value_idx
-    
+
+
+    def plot_ducb_components(self,
+        gas: np.ndarray,
+        var_scaled: np.ndarray,
+        dist_scaled: np.ndarray,
+        ducb_map: np.ndarray,
+        save_path: str,
+        loc: np.ndarray,                 # NEW: robot pose (x, y)
+        heading_onehot: np.ndarray,      # NEW: one-hot heading
+        x_range=(0, 250),
+        y_range=(0, 250),
+        interp="bicubic",
+        mark_max=True,
+        pose_arrow_len: float = 10.0,    # NEW: arrow length in meters
+    ):
+        """
+        Creates a 2x2 figure showing DUCB components and saves to PDF.
+
+        Panels:
+        (1) gas term          — viridis
+        (2) variance term     — coolwarm
+        (3) distance term     — magma (+ robot pose)
+        (4) DUCB map          — cividis + max marker
+
+        All inputs must be same-shape 2D arrays.
+        """
+
+        # --- Heading angle from one-hot ---
+        heading_onehot = np.asarray(heading_onehot, dtype=float)
+        idx = int(np.argmax(heading_onehot))
+        n_dirs = len(heading_onehot)
+        heading_angle = idx * (2.0 * np.pi / n_dirs)
+
+        # --- robot location ---
+        loc = np.asarray(loc, dtype=float).reshape(-1)
+        if loc.size != 2:
+            raise ValueError("loc must be a 2-element array-like: (x, y).")
+        x0, y0 = float(loc[0]), float(loc[1])
+
+        # --- validation ---
+        shapes = {arr.shape for arr in [gas, var_scaled, dist_scaled, ducb_map]}
+        if len(shapes) != 1:
+            raise ValueError(f"All inputs must have same shape, got: {shapes}")
+
+        ny, nx = ducb_map.shape
+        extent = (x_range[0], x_range[1], y_range[0], y_range[1])
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10), sharex=False, sharey=False)
+        axes = axes.ravel()
+
+        # --- 1. Gas term ---
+        im0 = axes[0].imshow(
+            gas, extent=extent, origin="lower",
+            cmap="viridis", interpolation=interp, aspect="equal"
+        )
+        axes[0].set_title(r"Normalized predicted mean: $\hat{c}(x,y)$")
+        fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+
+        # --- 2. Variance term ---
+        im1 = axes[1].imshow(
+            var_scaled, extent=extent, origin="lower",
+            cmap="coolwarm", interpolation=interp, aspect="equal"
+        )
+        axes[1].set_title(r"Scaled variance: $\kappa \hat{\sigma}^2(x, y)$")
+        fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+        # --- 3. Distance term ---
+        ax_dist = axes[2]
+        im2 = ax_dist.imshow(
+            dist_scaled, extent=extent, origin="lower",
+            cmap="magma", interpolation=interp, aspect="equal"
+        )
+        ax_dist.set_title(r"Scaled distance: $\gamma\, D(x, y, R_{turn})$")
+        fig.colorbar(im2, ax=ax_dist, fraction=0.046, pad=0.04)
+
+        # ⭐ --- ROBOT POSE MARKER ON DISTANCE PLOT ---
+        # Draw position (circle) + heading arrow
+        ax_dist.plot(
+            x0, y0,
+            marker="o",
+            markersize=8,
+            markeredgecolor="black",
+            markerfacecolor="white",
+            linestyle="None",
+            zorder=8,
+            label="AUV"
+        )
+
+        dx = pose_arrow_len * np.cos(heading_angle)
+        dy = pose_arrow_len * np.sin(heading_angle)
+        ax_dist.arrow(
+            x0, y0, dx, dy,
+            length_includes_head=False,
+            head_width=4.0,
+            head_length=7.0,
+            linewidth=2.0,
+            edgecolor="black",
+            facecolor="white",
+            zorder=7,
+        )
+        ax_dist.legend(loc="upper right")
+
+        # --- 4. Final DUCB map ---
+        ax_map = axes[3]
+        im3 = ax_map.imshow(
+            ducb_map, extent=extent, origin="lower",
+            cmap="cividis", interpolation=interp, aspect="equal"
+        )
+        ax_map.set_title(r"DUCB score: $A(x, y)$")
+        fig.colorbar(im3, ax=ax_map, fraction=0.046, pad=0.04)
+
+        # ⭐ --- MAX MARKER ---
+        if mark_max:
+            flat_index = np.nanargmax(ducb_map)
+            iy, ix = np.unravel_index(flat_index, ducb_map.shape)
+
+            x_lin = np.linspace(x_range[0], x_range[1], nx)
+            y_lin = np.linspace(y_range[0], y_range[1], ny)
+            x_max = x_lin[ix]
+            y_max = y_lin[iy]
+
+            ax_map.plot(
+                x_max, y_max,
+                marker="*",
+                markersize=14,
+                markeredgecolor="black",
+                markerfacecolor="yellow",
+                linestyle="None",
+                zorder=5,
+                label=r"max$(A(x, y))$",
+            )
+            ax_map.legend(loc="upper right")
+
+        # --- shared formatting ---
+        for ax in axes:
+            ax.set_xlim(x_range[0], x_range[1])
+            ax.set_ylim(y_range[0], y_range[1])
+            ax.set_aspect("equal", adjustable="box")
+            ax.set_xlabel("Easting [m]")
+            ax.set_ylabel("Northing [m]")
+
+        fig.tight_layout()
+
+        if not save_path.lower().endswith(".pdf"):
+            save_path = save_path + ".pdf"
+
+        fig.savefig(save_path, format="pdf", bbox_inches="tight", dpi=300)
+        plt.show()
+        plt.close(fig)
+
+        return save_path
+
     def plot_acquisition_maps(self, sampled_xy=None, figsize=(10, 9), title=None,
                               cmap="viridis", s=2, marker="o"):
         """

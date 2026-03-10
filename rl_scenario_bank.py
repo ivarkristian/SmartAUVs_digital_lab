@@ -125,6 +125,31 @@ class ScenarioBank:
         print(f"Downsampled env {env_num} ({env['parameter']} time: {env['time']} depth: {env['depth']})")
         
         return
+    
+    def split_training_test_envs(self, environments: List[Record] = None, training_pct: float = 80):
+        """
+        Split the environments list into training and test sets.
+        training_pct is given as a percentage (0–100).
+        """
+
+        if environments is None:
+            raise ValueError("Environments must be provided")
+
+        n = len(environments)
+
+        train_ratio = training_pct / 100.0
+        train_num = int(train_ratio * n)
+        test_num = n - train_num
+
+        # sample test indices
+        test_indexes = set(random.sample(range(n), test_num))
+
+        # split lists
+        self.environments_test = [environments[i] for i in test_indexes]
+        self.environments = [environments[i] for i in range(n) if i not in test_indexes]
+        
+        return
+
 
     def save_envs(self, environments: List[Record], file_path: str | Path) -> None:
         """
@@ -152,11 +177,11 @@ class ScenarioBank:
             safe_records.append(new_rec)
 
         torch.save(safe_records, file_path)
-        print(f'Saved {len(self.environments)} environments to {file_path}')
+        print(f'Saved {len(environments)} environments to {file_path}')
     
         return
     
-    def load_envs(self, file_path: str | Path, device: str | torch.device = "cpu") -> List[Record]:
+    def load_envs(self, file_path: List[Path], device: str | torch.device = "cpu") -> List[Record]:
         """
         Load the list back into memory.
 
@@ -165,12 +190,98 @@ class ScenarioBank:
         file_path : path produced by `save_records`.
         device    : "cpu", "cuda", or torch.device; tensors will be mapped here.
         """
-        self.environments: List[Record] = torch.load(file_path, map_location=device, weights_only=False)
-        print(f'Loaded {len(self.environments)} environments from {file_path}')
+
+        self.environments: List[Record]
+        for file in file_path:
+            self.environments.extend(torch.load(file, map_location=device, weights_only=False))
+        
+        print(f'Loaded {len(self.environments)} environments from ', end='')
+        for f in file_path:
+            print(f'{f} ', end='')
+        print('')
 
         return
 
-    def plot_env(self, env_num=0, title_postfix=None, path=None, x_range=[0, 250], y_range=[0, 250]):
+    def plot_env(
+        self,
+        env_num=0,
+        title_postfix=None,
+        path=None,
+        x_range=[0, 250],
+        y_range=[0, 250],
+        plot_type="scatter",   # NEW: "scatter" or "contour"
+        levels=50              # NEW: contour levels (int or array)
+    ):
+        if len(self.environments) <= env_num:
+            print(f'Bank contains {len(self.environments)} environments (0-indexed). Tried to plot #{env_num}')
+            return
+
+        env = self.environments[env_num]
+        if env['parameter']:
+            coords = env['coords']
+            x = coords[:, 0]
+            y = coords[:, 1]
+            c = env['values']
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+
+            if plot_type == "scatter":
+                mappable = ax.scatter(x, y, c=c, cmap='coolwarm', s=1, vmin=c.min(), vmax=c.max())
+                cbar = fig.colorbar(mappable, ax=ax)
+                cbar.set_label('(Value)')
+
+            elif plot_type == "contour":
+                # Assume coords lie on a rectilinear grid.
+                # Build sorted unique axes
+                x_unique = np.unique(x)
+                y_unique = np.unique(y)
+
+                nx = x_unique.size
+                ny = y_unique.size
+
+                if nx * ny != c.size()[0]:
+                    raise ValueError(
+                        f"Grid assumption failed: nx*ny={nx*ny} but values has size={c.size()[0]}. "
+                        "If your grid has missing points, you need interpolation."
+                    )
+
+                # Map scattered (x,y) -> grid indices, then fill Z
+                ix = np.searchsorted(x_unique, x)
+                iy = np.searchsorted(y_unique, y)
+
+                Z = np.empty((ny, nx))
+                Z[iy, ix] = c
+
+                X, Y = np.meshgrid(x_unique, y_unique)
+
+                # contour lines only (no fill)
+                #contour = ax.contour(X, Y, Z, levels=levels, colors='black', linewidth=0.3)
+                contour = ax.contourf(X, Y, Z, levels=levels, cmap='viridis')
+
+                # Optional: label contour lines
+                #ax.clabel(contour, inline=True, fontsize=8)
+            else:
+                raise ValueError("plot_type must be 'scatter' or 'contour'")
+
+            # Plot path if provided
+            if path is not None:
+                ax.plot(path[:, 0], path[:, 1], color='black', linewidth=1)
+
+            ax.set_xlim(x_range[0], x_range[1])
+            ax.set_ylim(y_range[0], y_range[1])
+            # contour_zoom fig
+            #ax.set_xlim(40, 140)
+            #ax.set_ylim(40, 140)
+
+            ax.set_xlabel('Easting [m]')
+            ax.set_ylabel('Northing [m]')
+            ax.set_title(f"Time {env['time']}, {env['parameter']} at {env['depth']}m depth ({title_postfix})")
+
+            return fig, ax
+
+        print(f"Could not plot dataset = {self.dataset}, parameter = {env['parameter']}")
+
+    def plot_env_old(self, env_num=0, title_postfix=None, path=None, x_range=[0, 250], y_range=[0, 250]):
         if len(self.environments) <= env_num:
             print(f'Bank contains {len(self.environments)} environments (0-indexed). Tried to plot #{env_num}')
             return
@@ -548,6 +659,22 @@ if __name__ == '__main__':
 
     # Load from file
     bank.load_envs('tensor_envs/my_file.pt')
+
+    # Usage example
+    bank = ScenarioBank(data_dir='.')
+
+    envs_files = ['tensor_envs/1c_pCO2_67_69.pt', 'tensor_envs/1b_pCO2_67_69_until_67_69_above2pct.pt']
+
+    bank.load_envs(envs_files)
+    sensor_range = [0, 2000]
+    bank.clip_sensor_range(parameter='pCO2', min=sensor_range[0], max=sensor_range[1])
+    bank.gas_coverage_cutoff(cutoff_concentration=550, cutoff_percentage_min=4)
+    # At cutoff=4, 81 and 8 environments are left from scenario 1c and 1b
+
+    # Split into training and test
+    bank.split_training_test_envs(bank.environments)
+    bank.save_envs(bank.environments, 'tensor_envs/environments_train.pt')
+    bank.save_envs(bank.environments_test, 'tensor_envs/environments_test.pt')
 
 
 # %%

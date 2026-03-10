@@ -91,7 +91,8 @@ class GasSurveyDubinsEnv(gym.Env):
 
     #@profile
     def reset(self, seed=None, options=None, random_scenario=None, env_xy=None, values=None):
-        
+        super().reset(seed=seed)
+
         if self.n_episodes % self.print_info_rate == 0 and self.n_episodes:
             print(f'Ep {self.n_episodes}, mean reward = {(self.acc_reward/self.print_info_rate):.3}')
             self.acc_reward = 0
@@ -201,7 +202,7 @@ class GasSurveyDubinsEnv(gym.Env):
         #loc_y = (self.env_y_max-1) * random.random()
         #self.heading = np.zeros(4)
         #self.heading[random.choice([0, 1, 2, 3])] += 1
-        self.heading = np.zeros(8)
+        self.heading = np.zeros(8, dtype=np.int8)
         self.heading[random.choice([0, 1, 2, 3, 4, 5, 6, 7])] += 1
 
         self.obs_x_len=self.env_x_max/self.obs_x
@@ -239,6 +240,8 @@ class GasSurveyDubinsEnv(gym.Env):
         #old_ind_y, old_ind_x = np.argwhere(self.location)[0]
         old_var = self.pred_var_norm # remember to compare with correct new var  (norm, clipped etc.)
         old_pred_mu = self.pred_mu
+        old_pred_mu_norm_clipped = self.pred_mu_norm_clipped
+        self.current_action = action
 
         if self.debug:
             print(f'step: {self.n_steps} Q-action: {action}')
@@ -340,6 +343,8 @@ class GasSurveyDubinsEnv(gym.Env):
         elif self.channels[0] == 1 and self.channels[1] == 1:
             if self.reward_func == 'e2e':
                 reward = self._reward_e2e(old_pred_mu)
+            elif self.reward_func == 'surprise':
+                reward = self._reward_ch_11000_surprise(old_pred_mu_norm_clipped, old_var, sample_coords_xy, measurements)
             else:
                 reward = self._reward_ch_11000(old_var, measurements)
 
@@ -431,6 +436,109 @@ class GasSurveyDubinsEnv(gym.Env):
         if self.debug:
             print(f'r_gas: {r_gas:.4f}, r_var: {r_var:.4f}, r_dist: {r_dist:.4f}, r_tot: {reward:.4f}')
 
+        return reward
+    
+    def _reward_ch_11000_surprise(
+        self,
+        old_mu_norm,
+        old_var_norm,
+        sample_coords,
+        measurements,
+        reward_weights=(1.0, 10.0, 1.0)#(0.34, 0.33, 0.33)
+    ):
+        """
+        Surrogate reward using real measurements and GP predictions.
+        """
+        def _bilinear_sample(map_t, coords_xy):
+            if coords_xy.numel() == 0:
+                return torch.empty((0,), device=map_t.device, dtype=map_t.dtype)
+            h, w = map_t.shape[-2], map_t.shape[-1]
+            x = coords_xy[:, 0] / float(self.env_x_max) * (w - 1)
+            y = coords_xy[:, 1] / float(self.env_y_max) * (h - 1)
+            x0 = torch.floor(x).to(dtype=torch.long)
+            y0 = torch.floor(y).to(dtype=torch.long)
+            x1 = torch.clamp(x0 + 1, max=w - 1)
+            y1 = torch.clamp(y0 + 1, max=h - 1)
+            x0 = torch.clamp(x0, min=0, max=w - 1)
+            y0 = torch.clamp(y0, min=0, max=h - 1)
+            v00 = map_t[y0, x0]
+            v10 = map_t[y0, x1]
+            v01 = map_t[y1, x0]
+            v11 = map_t[y1, x1]
+            wx = (x - x0.to(dtype=map_t.dtype))
+            wy = (y - y0.to(dtype=map_t.dtype))
+            v0 = v00 * (1 - wx) + v10 * wx
+            v1 = v01 * (1 - wx) + v11 * wx
+            return v0 * (1 - wy) + v1 * wy
+
+        if not torch.is_tensor(sample_coords):
+            sample_coords = torch.as_tensor(sample_coords, device=self.device, dtype=torch.float32)
+        if not torch.is_tensor(measurements):
+            measurements = torch.as_tensor(measurements, device=self.device, dtype=torch.float32)
+        if old_mu_norm is None:
+            old_mu_norm = self.pred_mu_norm_t
+        if not torch.is_tensor(old_mu_norm):
+            old_mu_norm = torch.as_tensor(old_mu_norm, device=self.device, dtype=torch.float32)
+        if not torch.is_tensor(old_var_norm):
+            old_var_norm = torch.as_tensor(old_var_norm, device=self.device, dtype=torch.float32)
+
+        # mean_map -> 0,1
+        mean_map = torch.clamp(old_mu_norm, 0, 255).to(dtype=torch.float32) / 255.0
+        # mean_samples -> 0,1
+        mean_samples = _bilinear_sample(mean_map, sample_coords)
+        
+        measurements_zeroed = measurements - self.min_concentration
+        measurements_norm = measurements_zeroed / (self.max_concentration - self.min_concentration)
+        measurements_norm = measurements_norm.clamp(min=0.0, max=1.0)
+        # measurements_norm -> 0,1
+        if self.debug:
+            print(f'mean_map(min,max): {mean_map.mean()} ({mean_map.min():.2f}, {mean_map.max():.2f})')
+            print(f'mean_samples(min,max): {mean_samples.mean()} ({mean_samples.min():.2f}, {mean_samples.max():.2f})')
+            print(f'measurements_norm(min,max): {measurements_norm.mean()} ({measurements_norm.min():.2f}, {measurements_norm.max():.2f})')
+
+        #value_reward = measurements_norm.mean() if measurements_norm.numel() else torch.tensor(0.0, device=self.device)
+        # value_reward -> 0,1
+        value_reward = (measurements_zeroed >= 5).sum()/len(measurements_zeroed) if measurements_zeroed.numel() else torch.tensor(0.0, device=self.device)
+        surprise_reward = (measurements_norm - mean_samples).abs().mean() if mean_samples.numel() else torch.tensor(0.0, device=self.device)
+
+        pred_var_norm_t = getattr(self, "pred_var_norm_t", None)
+        if pred_var_norm_t is None:
+            pred_var_norm_t = torch.as_tensor(self.pred_var_norm, device=self.device)
+        old_var_t = old_var_norm if torch.is_tensor(old_var_norm) else torch.as_tensor(old_var_norm, device=self.device)
+        var_red = (old_var_t.mean() - pred_var_norm_t.mean()) # / 255.0
+        var_red = min(2.0, var_red) * 22/len(measurements)
+        #var_red = var_red.clamp(min=0.0, max=1.0)
+
+        weights = torch.as_tensor(reward_weights, device=self.device, dtype=torch.float32)
+        #weight_sum = weights.sum()
+        #if weight_sum <= 0:
+        #    weights = torch.full_like(weights, 1.0 / float(weights.numel()))
+        #else:
+        #    weights = weights / weight_sum
+        
+        if self.debug:
+            print(f'value_r: {value_reward:.2f}, surprise_r: {surprise_reward:.2f}, var_r: {var_red:.2f}')
+
+        reward = weights[0] * value_reward + weights[1] * surprise_reward + weights[2] * var_red
+        
+        turn_penalty = -0.2
+        move_penalty = -1.0
+
+        if self.current_action != 1:
+            reward += turn_penalty
+        
+        reward += move_penalty
+
+        r_term = 0.0
+        if pred_var_norm_t.mean() <= 125:
+            r_term = 5.0
+            self.terminated = True
+        
+        reward += r_term
+
+        if self.debug:
+            print(f'Reward: {reward}')
+        
         return reward
 
     def _dubins_delta_90(self, action, heading_1hot, turn_radius: float | int):
@@ -1246,7 +1354,7 @@ def move_with_heading(
         delta_bins = int(math.copysign(bins_per_turn, heading_delta_bins))
     new_idx = (h_idx + delta_bins) % n_headings
 
-    new_onehot = np.zeros(n_headings, dtype=int)
+    new_onehot = np.zeros(n_headings, dtype=np.int8)
     new_onehot[new_idx] = 1
 
     return np.array([dx_world, dy_world], dtype=float), new_onehot

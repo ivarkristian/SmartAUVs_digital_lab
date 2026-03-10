@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.gridspec as gridspec
+import matplotlib as mpl
+mpl.rcParams['pdf.fonttype'] = 42
 from gpytorch.utils.errors import NotPSDError
 from matplotlib.ticker import MaxNLocator
 from collections import defaultdict
@@ -769,13 +771,14 @@ def plot_sampling_comparison_n_plots_old(
     cmap="viridis",
     title="Sampling strategies vs true field",
     save_str=None,
-    show_true_field=True,
+    show_true_field_as_first_plot=True,
+    show_true_field_as_background=False
 ):
     """
     Visual comparison of sampling paths for an arbitrary number of agents.
 
     Layout:
-        If show_true_field=True:
+        If show_true_field_as_first_plot=True:
             First panel = true scalar field
             Remaining = one panel per agent
         Otherwise:
@@ -821,9 +824,9 @@ def plot_sampling_comparison_n_plots_old(
 
     # ---------------- Panel Count ---------------- #
     n_agents = len(agent_labels)
-    total_panels = n_agents + (1 if show_true_field else 0)
+    total_panels = n_agents + (1 if show_true_field_as_first_plot else 0)
 
-    ncols = 3
+    ncols = min(3, total_panels)
     nrows = int(np.ceil(total_panels / ncols))
 
     fig_height = 3 + 3 * nrows
@@ -831,9 +834,9 @@ def plot_sampling_comparison_n_plots_old(
 
     gs = gridspec.GridSpec(
         nrows, ncols, figure=fig,
-        wspace=-0.42, hspace=0.30,
+        wspace=-0.40, hspace=0.30,
         left=0.07, right=0.92,
-        bottom=0.08, top=0.92
+        bottom=0.08, top=0.90
     )
 
     axes = []
@@ -850,32 +853,51 @@ def plot_sampling_comparison_n_plots_old(
     env_xy_flat = env_xy.reshape(-1, 2)
 
     # ---------------- Helper: scatter ---------------- #
-    def scatter_samples(ax, X, Y, samp_xy, samp_vals, label):
+    def scatter_samples(ax, X, Y, samp_xy, samp_vals, label, show_bck=False):
         # Uniform background over the domain extent
         xmin, xmax = np.min(X), np.max(X)
         ymin, ymax = np.min(Y), np.max(Y)
 
-        ax.set_facecolor("white")
-        ax.add_patch(plt.Rectangle(
-            (xmin, ymin), xmax - xmin, ymax - ymin,
-            facecolor="0.95", edgecolor="none", zorder=0
-        ))
+        if show_bck:
+            excess = np.clip(values.cpu().numpy() - bg + eps, eps, None)
+            sc = ax.scatter(
+                samp_xy[:, 0], samp_xy[:, 1],
+                color='lightgrey',
+                s=12, linewidths=0,
+                zorder=2
+            )
 
-        #ax.scatter(X, Y, c="lightgray", s=5, alpha=0.3, linewidths=0)
+            sc = ax.scatter(
+                env_xy_flat.cpu().numpy()[:, 0], env_xy_flat.cpu().numpy()[:, 1],
+                c=excess, cmap=cmap, norm=norm,
+                s=12, linewidths=0,
+                rasterized=True,
+                zorder=1
+            )
+        else:
+            ax.set_facecolor("white")
+            ax.add_patch(plt.Rectangle(
+                (xmin, ymin), xmax - xmin, ymax - ymin,
+                facecolor="0.95", edgecolor="none", zorder=0
+            ))
+        
+            excess = np.clip(samp_vals - bg + eps, eps, None)
+
+            #ax.scatter(X, Y, c="lightgray", s=5, alpha=0.3, linewidths=0)
+        
+            sc = ax.scatter(
+                samp_xy[:, 0], samp_xy[:, 1],
+                c=excess, cmap=cmap, norm=norm,
+                s=12, linewidths=0,
+                rasterized=True,
+                zorder=2
+            )
+
         if samp_xy.size == 0:
             ax.set_title(label + " (no samples)", fontsize=13)
-            return None
+        else:
+            ax.set_title(label, fontsize=13)
 
-        excess = np.clip(samp_vals - bg + eps, eps, None)
-
-        sc = ax.scatter(
-            samp_xy[:, 0], samp_xy[:, 1],
-            c=excess, cmap=cmap, norm=norm,
-            s=12, linewidths=0,
-            rasterized=True,
-            zorder=2
-        )
-        ax.set_title(label, fontsize=13)
         ax.set_xlabel("East [m]", fontsize=12)
         ax.set_ylabel("North [m]", fontsize=12)
         return sc
@@ -884,7 +906,7 @@ def plot_sampling_comparison_n_plots_old(
     panel_idx = 0
 
     # True field (optional)
-    if show_true_field:
+    if show_true_field_as_first_plot:
         ax = axes[panel_idx]
         panel_idx += 1
 
@@ -913,14 +935,14 @@ def plot_sampling_comparison_n_plots_old(
         else:
             nice_name = label
 
-        sc = scatter_samples(ax, X, Y, np.asarray(coords), np.asarray(vals), nice_name)
+        sc = scatter_samples(ax, X, Y, np.asarray(coords), np.asarray(vals), nice_name, show_true_field_as_background)
         if sc is not None:
             last_scatter = sc
-            if not show_true_field and mappable_for_cbar is None:
+            if not show_true_field_as_first_plot and mappable_for_cbar is None:
                 mappable_for_cbar = sc
 
     # ---------------- Shared Colorbar ---------------- #
-    cbar_ax = fig.add_axes([0.85, 0.1, 0.02, 0.85])
+    cbar_ax = fig.add_axes([0.81, 0.08, 0.02, 0.82])
     cbar = fig.colorbar(mappable_for_cbar, cax=cbar_ax)
 
     ticks = cbar.get_ticks()
@@ -934,7 +956,7 @@ def plot_sampling_comparison_n_plots_old(
     cbar.set_label(r"pCO$_2$", fontsize=12)
 
     fig.suptitle(title, fontsize=14)
-    fig.savefig('figures_p3/' + f'{save_str}_sampling_paths.eps', format='eps', dpi=300)
+    fig.savefig('figures_p3/fig1_versions/' + f'{save_str}_sampling_paths.pdf', format='pdf', dpi=300)
     plt.show()
 
 def plot_sampling_comparison_lognorm_gridspec(

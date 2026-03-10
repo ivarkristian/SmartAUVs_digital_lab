@@ -9,13 +9,13 @@ import gymnasium as gym
 from gymnasium import spaces
 import random
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import time
 from typing import Tuple, Union, Sequence
 from stable_baselines3.common.buffers import DictReplayBuffer, DictReplayBufferSamples
 from scipy.ndimage import shift      # comes with SciPy
 
 import dubins
-
 from gpt_class_exactgpmodel import ExactGPModel
 import chem_utils
 import agents
@@ -295,6 +295,27 @@ class GasSurveyDubinsAgentEnv(gym.Env):
         self.make_circle(self.loc[0], self.loc[1], self.location_radius)
         
         obs, truncated, info = self._get_obs_truncated_info()
+
+        plot_belief = True
+        if plot_belief:
+            # plot side by side the sampled values, the predicted mean and the predicted variance
+            if self.n_steps % 8 == 0:
+                print(f'plotting step {self.n_steps}')
+                fig, ax = self.plot_path_mean_var_log(self.sampled_coords[:self.sample_idx], self.sampled_vals[:self.sample_idx], self.pred_mu_norm,   # expected shape (100, 100)
+                    self.pred_var_norm,    # expected shape (100, 100)
+                    550,      # bg in your snippet
+                    x_range=(0, 250),
+                    y_range=(0, 250),
+                    value_title="",
+                    mean_cmap="viridis",
+                    var_cmap="coolwarm",
+                    eps = 1e-2,
+                    interp = "bicubic",
+                    vmax_floor = 2000.0,  # matches your "max(vmax_data, 2000 - bg + eps)"
+                )
+                
+                fig.savefig('figures_p3/fig_belief_state_versions/' + f'e{self.n_episodes}_s{self.n_steps}_sampling_paths.pdf', format='pdf', dpi=300)
+                plt.show()
         
         if self.channels[0] == 0 and self.channels[1] == 1:
             reward = self._reward_ch_01000(old_var)
@@ -782,6 +803,136 @@ class GasSurveyDubinsAgentEnv(gym.Env):
 
         return
 
+    def plot_path_mean_var_log(
+        self,
+        path: np.ndarray,
+        path_c: np.ndarray,
+        gp_mean: np.ndarray,   # expected shape (100, 100)
+        gp_var: np.ndarray,    # expected shape (100, 100)
+        threshold: float,      # bg in your snippet
+        x_range=(0, 250),
+        y_range=(0, 250),
+        value_title="",
+        mean_cmap="viridis",
+        var_cmap="coolwarm",
+        eps: float = 1e-2,
+        interp: str = "bicubic",
+        vmax_floor: float = 2000.0,  # matches your "max(vmax_data, 2000 - bg + eps)"
+    ):
+        """
+        Side-by-side plots:
+        1) Path only, colored by (path_c - threshold + eps) with LogNorm, viridis
+        2) GP predicted mean, colored by (gp_mean - threshold + eps) with same LogNorm, viridis
+        3) GP predictive variance, coolwarm (linear)
+
+        The mean/path panels share the same LogNorm (vmin=eps, vmax computed from data + floor).
+        """
+
+        # --- basic validation ---
+        if path is None or len(path) == 0:
+            raise ValueError("path must be a non-empty array of shape (N, 2).")
+        if path_c is None or len(path_c) != len(path):
+            raise ValueError("path_c must be shape (N,) and match path length.")
+        if gp_mean is None or gp_var is None:
+            raise ValueError("gp_mean and gp_var must be provided.")
+        gp_mean = np.asarray(gp_mean)
+        gp_var = np.asarray(gp_var)
+        if gp_mean.shape != gp_var.shape:
+            raise ValueError(f"gp_mean.shape {gp_mean.shape} must equal gp_var.shape {gp_var.shape}.")
+        if gp_mean.ndim != 2:
+            raise ValueError("gp_mean and gp_var must be 2D arrays (e.g. 100x100).")
+
+        # ---------------- LogNorm Scaling (like your snippet) ---------------- #
+        bg = threshold
+
+        # Excess over background for path + mean
+        path_excess = np.clip(np.asarray(path_c) - bg + eps, eps, None)
+        mean_clipped = np.clip(np.asarray(gp_mean), 1, None)
+
+        # Compute vmax similar to your code: from data + a floor tied to 2000
+        #vmax_data = np.nanmax([np.nanmax(path_excess), np.nanmax(mean_excess)])
+        vmax_data = np.nanmax([path_excess])
+        vmin = eps
+        vmax = max(vmax_data, vmax_floor - bg + eps)
+
+        norm_samples = LogNorm(vmin=vmin, vmax=vmax)
+        norm_mean = LogNorm(vmin=eps, vmax=255)
+
+        # ---------------- Plotting ---------------- #
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharex=True, sharey=False)
+        extent = (x_range[0], x_range[1], y_range[0], y_range[1])
+
+        # 1) Path (log-scaled)
+        ax = axes[0]
+        sc = ax.scatter(
+            path[:, 0], path[:, 1],
+            c=path_excess,
+            cmap=mean_cmap,
+            #norm=norm_samples,
+            s=10
+        )
+        cb0 = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+        #ticks = cb0.get_ticks()
+        #if len(ticks) > 7:
+        #    ticks = ticks[1:7]
+        #    cb0.set_ticks(ticks)
+
+        #ticklabels = [f"{bg + t:.0f}" for t in ticks]
+        #cb0.set_ticklabels(ticklabels)
+        #cb0.ax.tick_params(labelsize=11)
+
+        cb0.set_label(r"pCO$_2$")
+        ax.set_title("Samples")
+        ax.set_xlabel("Easting [m]")
+        ax.set_ylabel("Northing [m]")
+
+        # 2) GP mean (log-scaled)
+        ax = axes[1]
+        im_mean = ax.imshow(
+            mean_clipped,
+            extent=extent,
+            origin="lower",
+            cmap=mean_cmap,
+            #norm=norm_mean,
+            #vmin=0, vmax=255,
+            interpolation=interp,
+            aspect="equal",
+        )
+        cb1 = fig.colorbar(im_mean, ax=ax, fraction=0.046, pad=0.04)
+        
+        cb1.set_label(r"Normalized pCO$_2$")
+        ax.set_title("GP predicted mean")
+        ax.set_xlabel("Easting [m]")
+
+        # 3) GP variance (linear)
+        ax = axes[2]
+        im_var = ax.imshow(
+            gp_var,
+            extent=extent,
+            origin="lower",
+            cmap=var_cmap,
+            interpolation=interp,
+            aspect="equal",
+        )
+        cb2 = fig.colorbar(im_var, ax=ax, fraction=0.046, pad=0.04)
+        cb2.set_label("Normalized variance")
+        ax.set_title("GP predictive variance")
+        ax.set_xlabel("Easting [m]")
+
+        # Common axes setup
+        for ax in axes:
+            ax.set_xlim(x_range[0], x_range[1])
+            ax.set_ylim(y_range[0], y_range[1])
+            ax.set_aspect("equal", adjustable="box")
+
+        fig.suptitle(
+            f"Time {self.time}, {self.parameter} at -{self.depth}m. "
+            f"({self.cur_str:.2}m/s @ {round(self.cur_dir)} deg)",
+            y=1.02
+        )
+        fig.tight_layout()
+        return fig, axes
+
     def plot_env(self, x=None, y=None, c=None, path=None, x_range=[0, 250], y_range=[0, 250], value_title=''):
 
         if x is None:
@@ -792,7 +943,7 @@ class GasSurveyDubinsAgentEnv(gym.Env):
             c = self.values
 
         fig, ax = plt.subplots(figsize=(8, 6))
-        scatter = ax.scatter(x, y, c=c, cmap='coolwarm', s=1, vmin=c.min(), vmax=c.max())
+        scatter = ax.scatter(x, y, c=c, cmap='viridis', s=1, vmin=c.min(), vmax=c.max())
         if path is not None:
             ax.scatter(path[:, 0], path[:, 1], c='black', s=1)
         
