@@ -107,7 +107,7 @@ def main():
         save_prefix = '1_'
         models_dir = f"{models_parent}/{load_time}"
 
-        agent = PERDQN.load(f"{models_dir}/{load_model}", env=env, device=env.device)
+        agent = PERDQN.load(f"{models_dir}/{load_model}", env=env, device=single_env.device)
         try:
             agent.load_replay_buffer(f"{models_dir}/buffer.pkl")
         except:
@@ -151,7 +151,7 @@ def main():
     obs = env.reset()
 
     #TIMESTEPS = 2400
-    TIMESTEPS = 10000
+    TIMESTEPS = 80000
     num_saves=0
     while True:
         agent.learn(
