@@ -63,16 +63,21 @@ def main():
 
     # dummy env
     channels = np.array([1, 1, 0, 0, 0])
-    env = rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], channels=channels, device=device)
-    obs, info = env.reset()   # single env, not vec env
+    single_env = make_env(0, bank, device)() #rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], channels=channels, device=device)
+    obs, info = single_env.reset()   # single env, not vec env
 
     n_envs = 2
+    if n_envs > 1:
+        env = SubprocVecEnv([make_env(i, bank, device) for i in range(n_envs)])
+    else:
+        env = make_env(0, bank, device) #rl_gas_survey_dubins_env.GasSurveyDubinsEnv(bank, gp_pred_resolution=[100, 100], channels=channels, device=device)
+
     buffer_size = 400_000                      # how many transitions
 
     replay_buffer = rl_DQN_PER.PrioritizedCpuDictReplayBuffer(
         buffer_size       = buffer_size,
-        observation_space = env.observation_space,
-        action_space      = env.action_space,
+        observation_space = single_env.observation_space,
+        action_space      = single_env.action_space,
         device            = "cpu",           # storage
         sample_device     = device,          # default target device
         n_envs            = n_envs,
@@ -124,12 +129,10 @@ def main():
             features_extractor_kwargs=dict(features_dim=512),
         )
 
-        vec_env = SubprocVecEnv([make_env(i, bank, device) for i in range(n_envs)])
-
         agent = PERDQN(
             "MultiInputPolicy",
-            vec_env,                        # env returns {"map": ..., "loc": ...}
-            device=env.device,
+            env,                        # env returns {"map": ..., "loc": ...}
+            device=single_env.device,
             buffer_size=buffer_size,
             batch_size=256,
             learning_rate=3e-4,
@@ -145,7 +148,7 @@ def main():
         agent.replay_buffer = replay_buffer          # overwrite in place
 
 
-    obs = vec_env.reset()
+    obs = env.reset()
 
     #TIMESTEPS = 2400
     TIMESTEPS = 10000
