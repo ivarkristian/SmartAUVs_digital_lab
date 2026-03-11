@@ -149,8 +149,8 @@ def main():
 
     #TIMESTEPS = 2400
     TIMESTEPS = 10000
-    a=0
-    while a < 1:
+    num_saves=0
+    while True:
         agent.learn(
             total_timesteps=TIMESTEPS,
             reset_num_timesteps=False,
@@ -158,7 +158,8 @@ def main():
             tb_log_name=f'PERDQN'
             )
         #torch.cuda.memory._dump_snapshot(f"{models_dir}/mem_{env.n_episodes}.pickle")
-        agent.save(f"{models_dir}/{save_prefix}{env.total_steps}")
+        num_saves += 1
+        agent.save(f"{models_dir}/{save_prefix}_{num_saves*TIMESTEPS}")
         agent.save_replay_buffer(f"{models_dir}/buffer.pkl")
     
     return
